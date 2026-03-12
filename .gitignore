@@ -5,6 +5,6 @@ __pycache__/
 
 # Generated dataset artifacts
 /data/
-data/**/*.json
-data/**/*.parquet
-data/**/*.npy
+*.json
+*.parquet
+*.npy

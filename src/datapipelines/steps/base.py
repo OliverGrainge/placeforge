@@ -23,6 +23,6 @@ class BaseStep(ABC):
             desc=f"{self._pipeline_name} | {label}",
             dynamic_ncols=True,
             leave=True,
-            position=self._progress_position,
+            position=0,
             **kwargs,
         )
