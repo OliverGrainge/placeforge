@@ -1,0 +1,16 @@
+# Core CLI and data pipeline
+pandas
+pyarrow
+PyYAML
+tqdm
+# Dataset loading and visualization
+Pillow
+matplotlib
+# Training stack
+torch
+torchvision
+pytorch-lightning
+pytorch-metric-learning
+torchmetrics
+lightning_utilities
+wandb
