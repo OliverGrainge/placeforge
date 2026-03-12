@@ -1,0 +1,32 @@
+[project]
+name = "placeforge"
+version = "0.1.0"
+description = "Place recognition and matching"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Core CLI and data pipeline
+    "pandas",
+    "pyarrow",
+    "PyYAML",
+    "tqdm",
+    "python-dotenv",
+    # Dataset loading and visualization
+    "Pillow",
+    "matplotlib",
+    # Training stack
+    "torch",
+    "torchvision",
+    "pytorch-lightning",
+    "pytorch-metric-learning",
+    "torchmetrics",
+    "lightning_utilities",
+    "wandb",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/datapipelines", "src/modules", "src/datamodules"]

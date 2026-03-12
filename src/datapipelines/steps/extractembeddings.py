@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +20,6 @@ _DINOV2_EMBED_DIMS: dict[str, int] = {
     "dinov2_vitg14_reg": 1536,
 }
 
-_CHUNK_SIZE = 1024  # images per batch file
-
-
 class ExtractEmbeddingsStep(BaseStep):
     """Extract DINOv2 embeddings for all images and cache them on disk.
 
@@ -31,7 +29,8 @@ class ExtractEmbeddingsStep(BaseStep):
     after interruption.
 
     The step adds ``embedding_cache_dir`` and ``embedding_dim`` to the context
-    for downstream steps.
+    for downstream steps, along with ``embedding_index_path`` pointing at the
+    manifest/index file.
     """
 
     def __init__(
@@ -45,6 +44,9 @@ class ExtractEmbeddingsStep(BaseStep):
         context_key: str = "index",
         image_path_column: str = "image_path",
         image_id_column: str = "image_id",
+        cache_dir_context_key: str | None = None,
+        output_cache_dir_context_key: str = "embedding_cache_dir",
+        output_index_path_context_key: str = "embedding_index_path",
         name: str | None = None,
     ) -> None:
         super().__init__(name=name)
@@ -61,27 +63,22 @@ class ExtractEmbeddingsStep(BaseStep):
         self.context_key = context_key
         self.image_path_column = image_path_column
         self.image_id_column = image_id_column
+        self.cache_dir_context_key = cache_dir_context_key
+        self.output_cache_dir_context_key = output_cache_dir_context_key
+        self.output_index_path_context_key = output_index_path_context_key
 
     @property
     def embed_dim(self) -> int:
         return _DINOV2_EMBED_DIMS[self.model_name]
 
-    @property
-    def _batches_dir(self) -> Path:
-        return self.cache_dir / "batches"
-
-    @property
-    def _manifest_path(self) -> Path:
-        return self.cache_dir / "manifest.parquet"
-
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        import pandas as pd
-
+        cache_dir = self._resolve_cache_dir(context)
         dataframe = context[self.context_key]
         image_ids: list[str] = dataframe[self.image_id_column].tolist()
         image_paths: list[str] = dataframe[self.image_path_column].tolist()
 
-        cached_ids = self._load_cached_ids()
+        cached_ids = self._load_cached_ids(cache_dir)
+        completed_images = sum(1 for image_id in image_ids if image_id in cached_ids)
         uncached = [
             (iid, ipath)
             for iid, ipath in zip(image_ids, image_paths)
@@ -89,10 +86,16 @@ class ExtractEmbeddingsStep(BaseStep):
         ]
 
         if uncached:
-            self._extract_and_cache(uncached)
+            self._extract_and_cache(
+                uncached,
+                cache_dir,
+                total_images=len(image_ids),
+                completed_images=completed_images,
+            )
 
         context = dict(context)
-        context["embedding_cache_dir"] = self.cache_dir
+        context[self.output_cache_dir_context_key] = cache_dir
+        context[self.output_index_path_context_key] = self._manifest_path(cache_dir)
         context["embedding_dim"] = self.embed_dim
         return context
 
@@ -100,51 +103,91 @@ class ExtractEmbeddingsStep(BaseStep):
     # Cache helpers
     # ------------------------------------------------------------------
 
-    def _load_cached_ids(self) -> set[str]:
-        if not self._manifest_path.exists():
-            return set()
-        import pandas as pd
+    def _resolve_cache_dir(self, context: dict[str, Any]) -> Path:
+        if self.cache_dir_context_key and self.cache_dir_context_key in context:
+            return Path(context[self.cache_dir_context_key])
+        return self.cache_dir
 
-        manifest = pd.read_parquet(self._manifest_path)
+    def _batches_dir(self, cache_dir: Path) -> Path:
+        return cache_dir / "batches"
+
+    def _manifest_path(self, cache_dir: Path) -> Path:
+        return cache_dir / "manifest.parquet"
+
+    def _load_cached_ids(self, cache_dir: Path) -> set[str]:
+        manifest = self._load_manifest(cache_dir)
+        if manifest is None:
+            return set()
         return set(manifest["image_id"].tolist())
 
-    def _next_chunk_idx(self) -> int:
-        existing = sorted(self._batches_dir.glob("batch_*.npy"))
-        return len(existing)
+    def _load_manifest(self, cache_dir: Path) -> Any:
+        import pandas as pd
+
+        manifest_path = self._manifest_path(cache_dir)
+        if not manifest_path.exists():
+            return None
+
+        manifest = pd.read_parquet(manifest_path)
+        if manifest.empty:
+            return manifest
+
+        batch_dir = self._batches_dir(cache_dir)
+        valid_chunks = {
+            int(path.stem.split("_")[1])
+            for path in batch_dir.glob("batch_*.npy")
+        }
+        repaired = manifest[manifest["chunk_idx"].isin(valid_chunks)].reset_index(drop=True)
+        if len(repaired) != len(manifest):
+            self._write_manifest(cache_dir, repaired)
+        return repaired
+
+    def _next_chunk_idx(self, cache_dir: Path) -> int:
+        max_idx = -1
+        for path in self._batches_dir(cache_dir).glob("batch_*.npy"):
+            try:
+                chunk_idx = int(path.stem.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+            max_idx = max(max_idx, chunk_idx)
+        return max_idx + 1
 
     # ------------------------------------------------------------------
     # Extraction
     # ------------------------------------------------------------------
 
-    def _extract_and_cache(self, uncached: list[tuple[str, str]]) -> None:
-        import pandas as pd
+    def _extract_and_cache(
+        self,
+        uncached: list[tuple[str, str]],
+        cache_dir: Path,
+        *,
+        total_images: int,
+        completed_images: int,
+    ) -> None:
+        self._batches_dir(cache_dir).mkdir(parents=True, exist_ok=True)
 
-        self._batches_dir.mkdir(parents=True, exist_ok=True)
+        # Suppress DINOv2 xFormers warnings (model falls back to standard attention)
+        warnings.filterwarnings("ignore", message=".*xFormers is not available.*")
 
         device = self._resolve_device()
         model = self._load_model(device)
         transform = self._build_transform()
 
-        # Accumulate new manifest rows; append to existing manifest after each chunk
-        chunk_idx = self._next_chunk_idx()
-        pending_manifest: list[dict[str, Any]] = []
+        chunk_idx = self._next_chunk_idx(cache_dir)
 
-        with self.progress(total=len(uncached), desc="extract embeddings") as progress:
+        with self.progress(
+            total=total_images,
+            initial=completed_images,
+            desc="extract embeddings",
+        ) as progress:
             for batch_start in range(0, len(uncached), self.batch_size):
                 batch = uncached[batch_start : batch_start + self.batch_size]
                 batch_ids = [item[0] for item in batch]
                 batch_paths = [item[1] for item in batch]
 
                 embeddings = self._embed_batch(batch_paths, model, transform, device)
-                # Each GPU batch gets its own .npy file; chunk_idx always advances.
-                self._save_chunk(chunk_idx, embeddings, batch_ids, pending_manifest)
+                manifest_rows = self._save_chunk(cache_dir, chunk_idx, embeddings, batch_ids)
+                self._flush_manifest(cache_dir, manifest_rows)
                 chunk_idx += 1
-
-                # Flush manifest to disk periodically so interrupted runs can resume.
-                is_last = batch_start + self.batch_size >= len(uncached)
-                if len(pending_manifest) >= _CHUNK_SIZE or is_last:
-                    self._flush_manifest(pending_manifest)
-                    pending_manifest = []
 
                 progress.update(len(batch))
 
@@ -175,26 +218,35 @@ class ExtractEmbeddingsStep(BaseStep):
 
     def _save_chunk(
         self,
+        cache_dir: Path,
         chunk_idx: int,
         embeddings: Any,
         image_ids: list[str],
-        pending_manifest: list[dict[str, Any]],
-    ) -> None:
-        chunk_path = self._batches_dir / f"batch_{chunk_idx:06d}.npy"
-        np.save(chunk_path, embeddings)
-        for row_idx, image_id in enumerate(image_ids):
-            pending_manifest.append(
-                {"image_id": image_id, "chunk_idx": chunk_idx, "row_idx": row_idx}
-            )
+    ) -> list[dict[str, Any]]:
+        chunk_path = self._batches_dir(cache_dir) / f"batch_{chunk_idx:06d}.npy"
+        tmp_path = chunk_path.with_suffix(".tmp.npy")
+        np.save(tmp_path, embeddings)
+        tmp_path.replace(chunk_path)
+        return [
+            {"image_id": image_id, "chunk_idx": chunk_idx, "row_idx": row_idx}
+            for row_idx, image_id in enumerate(image_ids)
+        ]
 
-    def _flush_manifest(self, new_rows: list[dict[str, Any]]) -> None:
+    def _flush_manifest(self, cache_dir: Path, new_rows: list[dict[str, Any]]) -> None:
         import pandas as pd
 
         new_df = pd.DataFrame(new_rows)
-        if self._manifest_path.exists():
-            existing = pd.read_parquet(self._manifest_path)
+        manifest_path = self._manifest_path(cache_dir)
+        if manifest_path.exists():
+            existing = pd.read_parquet(manifest_path)
             new_df = pd.concat([existing, new_df], ignore_index=True)
-        new_df.to_parquet(self._manifest_path, index=False)
+        self._write_manifest(cache_dir, new_df)
+
+    def _write_manifest(self, cache_dir: Path, dataframe: Any) -> None:
+        manifest_path = self._manifest_path(cache_dir)
+        tmp_path = manifest_path.with_suffix(".tmp.parquet")
+        dataframe.to_parquet(tmp_path, index=False)
+        tmp_path.replace(manifest_path)
 
     # ------------------------------------------------------------------
     # Model / transform

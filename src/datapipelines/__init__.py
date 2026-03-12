@@ -39,7 +39,7 @@ def list_pipelines() -> tuple[str, ...]:
 
 
 # Import pipeline modules to ensure side effects (registration) occur on import
-from . import sf_xl_small, sf_xl_small_visual
+from . import sf_xl_small
 
 
 __all__ = ["Pipeline", "get_pipeline", "list_pipelines", "register_pipeline"]

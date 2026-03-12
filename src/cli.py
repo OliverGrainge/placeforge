@@ -9,6 +9,8 @@ import yaml
 from datapipelines import get_pipeline, list_pipelines
 
 
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="placeforge")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -45,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from dotenv import load_dotenv
+    load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.handler(args)

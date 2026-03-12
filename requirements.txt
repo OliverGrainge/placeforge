@@ -3,6 +3,8 @@ pandas
 pyarrow
 PyYAML
 tqdm
+python-dotenv
+
 # Dataset loading and visualization
 Pillow
 matplotlib
