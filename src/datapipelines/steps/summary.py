@@ -24,13 +24,14 @@ class DatasetSummaryStep(BaseStep):
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         if self.context_key not in context:
             raise KeyError(f"Context is missing dataframe at key {self.context_key!r}")
+        with self.progress(total=1, desc="build summary") as progress:
+            dataframe = context[self.context_key]
+            stats = self._build_summary(dataframe)
 
-        dataframe = context[self.context_key]
-        stats = self._build_summary(dataframe)
-
-        context = dict(context)
-        context[self.output_context_key] = stats
-        return context
+            context = dict(context)
+            context[self.output_context_key] = stats
+            progress.update(1)
+            return context
 
     def _build_summary(self, dataframe: Any) -> dict[str, Any]:
         stats: dict[str, Any] = {

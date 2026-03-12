@@ -30,26 +30,28 @@ class RemoveSmallPlacesStep(BaseStep):
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         if self.context_key not in context:
             raise KeyError(f"Context is missing dataframe at key {self.context_key!r}")
+        with self.progress(total=1, desc="remove small places") as progress:
+            dataframe = context[self.context_key]
+            if self.place_id_column not in dataframe.columns:
+                raise KeyError(
+                    f"Dataframe at {self.context_key!r} is missing place_id column {self.place_id_column!r}"
+                )
 
-        dataframe = context[self.context_key]
-        if self.place_id_column not in dataframe.columns:
-            raise KeyError(
-                f"Dataframe at {self.context_key!r} is missing place_id column {self.place_id_column!r}"
-            )
+            min_images_per_place = self._resolve_min_images_per_place(context)
+            if min_images_per_place is None or min_images_per_place <= 1:
+                progress.update(1)
+                return context
 
-        min_images_per_place = self._resolve_min_images_per_place(context)
-        if min_images_per_place is None or min_images_per_place <= 1:
+            place_counts = dataframe[self.place_id_column].value_counts(dropna=True)
+            valid_place_ids = set(place_counts[place_counts >= min_images_per_place].index.tolist())
+            mask = dataframe[self.place_id_column].isin(valid_place_ids)
+            filtered = dataframe.loc[mask].reset_index(drop=True)
+            filtered = self._prune_matches(filtered)
+
+            context = dict(context)
+            context[self.context_key] = filtered
+            progress.update(1)
             return context
-
-        place_counts = dataframe[self.place_id_column].value_counts(dropna=True)
-        valid_place_ids = set(place_counts[place_counts >= min_images_per_place].index.tolist())
-        mask = dataframe[self.place_id_column].isin(valid_place_ids)
-        filtered = dataframe.loc[mask].reset_index(drop=True)
-        filtered = self._prune_matches(filtered)
-
-        context = dict(context)
-        context[self.context_key] = filtered
-        return context
 
     def _resolve_min_images_per_place(self, context: dict[str, Any]) -> int | None:
         if self.min_images_per_place_context_key is not None:

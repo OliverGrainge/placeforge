@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from datapipelines import get_pipeline
+from datapipelines import get_pipeline, list_pipelines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,16 +24,20 @@ def build_parser() -> argparse.ArgumentParser:
         "datapipeline",
         help="Run a registered data pipeline",
     )
-    datapipeline_parser.add_argument("name", help="Registered pipeline name")
+    datapipeline_parser.add_argument(
+        "name",
+        nargs="?",
+        help="Registered pipeline name",
+    )
     datapipeline_parser.add_argument(
         "--context",
         type=Path,
         help="Optional path to a Python file defining INITIAL_CONTEXT as a dict",
     )
     datapipeline_parser.add_argument(
-        "--min-images-per-place",
-        type=int,
-        help="Remove any place_id with fewer than this many images",
+        "--list",
+        action="store_true",
+        help="List registered pipelines and exit",
     )
     datapipeline_parser.set_defaults(handler=_handle_datapipeline)
 
@@ -84,10 +88,20 @@ def _handle_eval(args: argparse.Namespace) -> int:
 
 
 def _handle_datapipeline(args: argparse.Namespace) -> int:
+    if args.list:
+        available = list_pipelines()
+        print("Available datapipelines:")
+        for pipeline_name in available:
+            print(f"- {pipeline_name}")
+        if not available:
+            print("- <none>")
+        return 0
+
+    if args.name is None:
+        raise SystemExit("datapipeline name is required unless --list is used")
+
     pipeline = get_pipeline(args.name)
     context = _load_initial_context(args.context) if args.context else {}
-    if args.min_images_per_place is not None:
-        context["min_images_per_place"] = args.min_images_per_place
     pipeline.run(context)
     return 0
 

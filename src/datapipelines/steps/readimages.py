@@ -51,10 +51,11 @@ class ReadImagesStep(BaseStep):
         if not self.data_root.exists():
             raise FileNotFoundError(f"Data root does not exist: {self.data_root}")
 
+        image_paths = list(self._iter_image_paths())
         records = {column: [] for column in self._record_columns()}
 
-        with self.progress(desc="scan images") as progress:
-            for image_path in self._iter_image_paths():
+        with self.progress(total=len(image_paths), desc="scan images") as progress:
+            for image_path in image_paths:
                 record = self._build_record(image_path)
                 for key, value in record.items():
                     records[key].append(value)

@@ -34,8 +34,12 @@ def get_pipeline(name: str) -> Pipeline:
     return factory()
 
 
+def list_pipelines() -> tuple[str, ...]:
+    return tuple(sorted(_PIPELINE_REGISTRY))
+
+
 # Import pipeline modules to ensure side effects (registration) occur on import
 from . import sf_xl_small, sf_xl_small_visual
 
 
-__all__ = ["Pipeline", "get_pipeline", "register_pipeline"]
+__all__ = ["Pipeline", "get_pipeline", "list_pipelines", "register_pipeline"]

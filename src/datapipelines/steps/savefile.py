@@ -24,13 +24,14 @@ class SaveFileStep(BaseStep):
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         if self.context_key not in context:
             raise KeyError(f"Context is missing value at key {self.context_key!r}")
+        with self.progress(total=1, desc="save file") as progress:
+            value = context[self.context_key]
+            self._write_value(value)
 
-        value = context[self.context_key]
-        self._write_value(value)
-
-        context = dict(context)
-        context[self.output_path_context_key] = str(self.output_path)
-        return context
+            context = dict(context)
+            context[self.output_path_context_key] = str(self.output_path)
+            progress.update(1)
+            return context
 
     def _write_value(self, value: Any) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
