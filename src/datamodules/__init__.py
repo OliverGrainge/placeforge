@@ -44,6 +44,6 @@ __all__ = ["get_datamodule", "register_datamodule"]
 
 
 try:
-    from . import train as _train
+    from . import datamodule as _datamodule
 except ModuleNotFoundError:
-    _train = None
+    _datamodule = None

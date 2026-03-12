@@ -9,6 +9,23 @@ if TYPE_CHECKING:
 
 
 class PlaceImageTrainDataset:
+    """Dataset indexed by place.  Each item returns M images sampled from one place.
+
+    Parameters
+    ----------
+    index_path:
+        Path to a parquet file with at least ``image_id``, ``image_path``,
+        ``place_id``, and ``supergroup_id`` columns.
+    images_per_place:
+        Number of images (M) to sample for each place.  Places with fewer
+        images than M are excluded.
+    transform:
+        Optional transform applied to each loaded image.
+    seed:
+        Base seed for image sampling.  Combined with the place index so
+        sampling is deterministic but independent per place.
+    """
+
     def __init__(
         self,
         index_path: str | Path,
@@ -37,110 +54,74 @@ class PlaceImageTrainDataset:
 
         dataframe = self._read_index()
         self._validate_columns(dataframe)
-        self.records = dataframe.to_dict("records")
-        self.image_id_to_record = {
-            str(record[self.image_id_column]): record for record in self.records
+        self._image_id_to_record = {
+            str(row[self.image_id_column]): row
+            for row in dataframe.to_dict("records")
         }
-        self.place_id_to_image_ids = self._build_place_index()
-        self.valid_indices, self.valid_supergroup_ids = self._build_valid_indices()
+        self._places, self.valid_supergroup_ids = self._build_places(dataframe)
 
-        if not self.valid_indices:
+        if not self._places:
             raise ValueError(
-                "No training rows have enough same-place images for the requested "
-                "images_per_place value, or no rows have a supergroup_id assigned"
+                "No places found in the training index with a supergroup_id assigned."
             )
 
     def __len__(self) -> int:
-        return len(self.valid_indices)
+        return len(self._places)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        anchor_index = self.valid_indices[index]
-        anchor_record = self.records[anchor_index]
-        anchor_image_id = str(anchor_record[self.image_id_column])
-        positive_image_ids = self._sample_positive_image_ids(anchor_record, seed_offset=index)
-        group_image_ids = [anchor_image_id, *positive_image_ids]
-        group_records = [self.image_id_to_record[image_id] for image_id in group_image_ids]
-
-        items = [self._build_image_item(record) for record in group_records]
+        place_id, supergroup_id, image_ids = self._places[index]
+        sampled_ids = random.Random(self.seed + index).sample(image_ids, self.images_per_place)
         return {
-            "anchor_index": anchor_index,
-            "anchor_image_id": anchor_image_id,
-            "image_ids": group_image_ids,
-            "items": items,
+            "place_id": place_id,
+            "supergroup_id": supergroup_id,
+            "image_ids": sampled_ids,
+            "items": [self._build_image_item(self._image_id_to_record[iid]) for iid in sampled_ids],
         }
 
-    def _build_valid_indices(self) -> tuple[list[int], list[int]]:
-        required_positive_count = self.images_per_place - 1
-        valid_indices: list[int] = []
-        valid_supergroup_ids: list[int] = []
-
-        for index, record in enumerate(self.records):
-            supergroup_id = record.get(self.supergroup_id_column)
-            if supergroup_id is None:
-                continue
-            positive_image_ids = self._positive_image_ids(record)
-            if len(positive_image_ids) >= required_positive_count:
-                valid_indices.append(index)
-                valid_supergroup_ids.append(int(supergroup_id))
-
-        return valid_indices, valid_supergroup_ids
-
-    def _sample_positive_image_ids(self, anchor_record: dict[str, Any], *, seed_offset: int) -> list[str]:
-        required_positive_count = self.images_per_place - 1
-        if required_positive_count == 0:
-            return []
-
-        matches = self._positive_image_ids(anchor_record)
-        generator = random.Random(self.seed + seed_offset)
-        return generator.sample(matches, required_positive_count)
-
-    def _build_place_index(self) -> dict[str, list[str]]:
-        place_id_to_image_ids: dict[str, list[str]] = {}
-        for record in self.records:
+    def _build_places(
+        self, dataframe: "pd.DataFrame"
+    ) -> tuple[list[tuple[str, int, list[str]]], list[int]]:
+        place_data: dict[str, tuple[int, list[str]]] = {}
+        for record in dataframe.to_dict("records"):
             place_id = record.get(self.place_id_column)
-            if place_id is None:
+            supergroup_id = record.get(self.supergroup_id_column)
+            if place_id is None or supergroup_id is None:
                 continue
-            image_id = str(record[self.image_id_column])
-            place_id_to_image_ids.setdefault(str(place_id), []).append(image_id)
-        return place_id_to_image_ids
+            place_id = str(place_id)
+            if place_id not in place_data:
+                place_data[place_id] = (int(supergroup_id), [])
+            place_data[place_id][1].append(str(record[self.image_id_column]))
 
-    def _positive_image_ids(self, record: dict[str, Any]) -> list[str]:
-        place_id = record.get(self.place_id_column)
-        if place_id is None:
-            return []
+        if place_data:
+            min_images = min(len(image_ids) for _, image_ids in place_data.values())
+            if self.images_per_place > min_images:
+                raise ValueError(
+                    f"images_per_place={self.images_per_place} exceeds the minimum number of "
+                    f"images in any place ({min_images}). Reduce images_per_place or re-run "
+                    f"the pipeline with a higher min_images_per_place."
+                )
 
-        raw_matches = self.place_id_to_image_ids.get(str(place_id), [])
-        anchor_image_id = str(record[self.image_id_column])
-        matches: list[str] = []
-        seen: set[str] = set()
+        places = []
+        supergroup_ids = []
+        for place_id, (supergroup_id, image_ids) in place_data.items():
+            places.append((place_id, supergroup_id, image_ids))
+            supergroup_ids.append(supergroup_id)
 
-        for match_image_id in raw_matches:
-            image_id = str(match_image_id)
-            if image_id == anchor_image_id or image_id in seen:
-                continue
-            if image_id not in self.image_id_to_record:
-                continue
-            seen.add(image_id)
-            matches.append(image_id)
-
-        return matches
+        return places, supergroup_ids
 
     def _build_image_item(self, record: dict[str, Any]) -> dict[str, Any]:
         item = {
             "image_id": str(record[self.image_id_column]),
             "image_path": str(record[self.image_path_column]),
         }
-
         if self.load_images:
             image = self._load_image(item["image_path"])
             if self.transform is not None:
                 image = self.transform(image)
             item["image"] = image
-
         for key, value in record.items():
             if key not in item:
                 item[key] = value
-
         return item
 
     def _read_index(self) -> "pd.DataFrame":
@@ -150,16 +131,15 @@ class PlaceImageTrainDataset:
         return pd.read_parquet(self.index_path)
 
     def _validate_columns(self, dataframe: "pd.DataFrame") -> None:
-        required_columns = (
+        required = (
             self.image_id_column,
             self.image_path_column,
             self.place_id_column,
             self.supergroup_id_column,
         )
-        missing_columns = [column for column in required_columns if column not in dataframe.columns]
-        if missing_columns:
-            missing = ", ".join(missing_columns)
-            raise KeyError(f"Training index is missing required columns: {missing}")
+        missing = [c for c in required if c not in dataframe.columns]
+        if missing:
+            raise KeyError(f"Training index is missing required columns: {', '.join(missing)}")
 
     @staticmethod
     def _import_pandas():
@@ -169,7 +149,6 @@ class PlaceImageTrainDataset:
             raise ModuleNotFoundError(
                 "PlaceImageTrainDataset requires pandas. Install it with `pip install pandas`."
             ) from exc
-
         return pd
 
     def _load_image(self, image_path: str) -> Any:
@@ -179,32 +158,26 @@ class PlaceImageTrainDataset:
             raise ModuleNotFoundError(
                 "Loading images requires Pillow. Install it with `pip install pillow`."
             ) from exc
-
         with Image.open(image_path) as image:
             return image.convert("RGB")
 
 
 class SupergroupBatchSampler:
-    """Yields batches of dataset indices where every index in a batch belongs
-    to the same supergroup.
+    """Yields batches of place indices where every place in a batch belongs to
+    the same supergroup.
 
-    Supergroups are iterated one at a time — all batches from supergroup A are
-    yielded before moving on to supergroup B.  This guarantees that any N
-    places drawn in a single batch are mutually non-adjacent geographically,
-    making them safe hard negatives for metric learning.
-
-    Both the supergroup order and the place order within each supergroup are
-    re-shuffled every epoch via ``set_epoch()``.
+    Supergroups are visited one at a time.  Within each supergroup, places are
+    chunked into batches of ``places_per_batch``.  Both supergroup order and
+    place order within each supergroup are reshuffled every epoch via
+    ``set_epoch()``.
 
     Parameters
     ----------
     supergroup_ids:
-        One integer per dataset item (parallel to the dataset's valid_indices).
+        One integer per dataset item (parallel to the dataset's places).
         Typically ``dataset.valid_supergroup_ids``.
     places_per_batch:
-        Number of places (N) per batch.  Each place contributes
-        ``images_per_place`` images, so the effective batch size seen by the
-        model is ``N × M``.
+        Number of places (N) per batch.
     shuffle:
         Shuffle supergroup order and place order within each supergroup.
     drop_last:
@@ -232,22 +205,17 @@ class SupergroupBatchSampler:
         self.seed = seed
         self._epoch = 0
 
-        # Build a mapping from supergroup_id → list of dataset indices
         groups: dict[int, list[int]] = {}
         for idx, sg_id in enumerate(supergroup_ids):
-            if sg_id not in groups:
-                groups[sg_id] = []
-            groups[sg_id].append(idx)
+            groups.setdefault(sg_id, []).append(idx)
         self._groups = groups
 
     def set_epoch(self, epoch: int) -> None:
-        """Call at the start of each epoch to get a fresh shuffle."""
         self._epoch = epoch
 
     def __iter__(self) -> Iterator[list[int]]:
         rng = random.Random(self.seed + self._epoch)
 
-        # Determine the order in which to visit supergroups
         supergroup_ids = list(self._groups.keys())
         if self.shuffle:
             rng.shuffle(supergroup_ids)
@@ -256,8 +224,6 @@ class SupergroupBatchSampler:
             indices = list(self._groups[sg_id])
             if self.shuffle:
                 rng.shuffle(indices)
-
-            # Yield fixed-size batches from this supergroup before moving on
             for start in range(0, len(indices), self.places_per_batch):
                 batch = indices[start : start + self.places_per_batch]
                 if len(batch) < self.places_per_batch and self.drop_last:
@@ -276,8 +242,8 @@ class SupergroupBatchSampler:
 
 
 def _make_collate_fn():
-    """Returns a collate function that flattens the nested items structure into
-    ``inputs`` (stacked image tensors) and ``labels`` (per-image place index)."""
+    """Flattens a batch of N place-dicts (each with M images) into stacked
+    ``inputs`` and per-image ``labels`` (0..N-1, repeated M times each)."""
     import torch
 
     def _to_tensor(image: Any) -> "torch.Tensor":
@@ -294,15 +260,23 @@ def _make_collate_fn():
             return torch.from_numpy(arr.transpose(2, 0, 1)).float() / 255.0
 
     def collate_fn(batch: list[dict]) -> dict:
+        supergroup_ids = {int(item["supergroup_id"]) for item in batch}
+        if len(supergroup_ids) != 1:
+            raise ValueError(
+                "Train batch contained multiple supergroup_ids; "
+                "SupergroupBatchSampler should keep each batch within one supergroup"
+            )
+        supergroup_id = supergroup_ids.pop()
         all_images: list = []
         all_labels: list = []
-        for label, item in enumerate(batch):
-            for img_item in item["items"]:
+        for label, place in enumerate(batch):
+            for img_item in place["items"]:
                 all_images.append(_to_tensor(img_item["image"]))
                 all_labels.append(label)
         return {
             "inputs": torch.stack(all_images),
             "labels": torch.tensor(all_labels),
+            "supergroup_id": torch.tensor(supergroup_id),
         }
 
     return collate_fn
@@ -345,8 +319,6 @@ def build_train_dataloader(
         seed=seed,
     )
 
-    # batch_sampler takes over batch composition, so batch_size/shuffle/drop_last
-    # must not be passed separately to DataLoader
     return DataLoader(
         train_dataset,
         batch_sampler=batch_sampler,

@@ -4,6 +4,10 @@ import torch
 from torch import Tensor, nn
 
 from . import register_model
+import warnings
+
+warnings.filterwarnings("ignore", message=".*xFormers is not available.*")
+
 
 
 class GeMPooling(nn.Module):

@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List registered pipelines and exit",
     )
+    datapipeline_parser.add_argument(
+        "--category",
+        choices=["train", "val"],
+        help="Filter pipelines by category (train or val)",
+    )
     datapipeline_parser.set_defaults(handler=_handle_datapipeline)
 
     return parser
@@ -54,8 +59,14 @@ def main(argv: list[str] | None = None) -> int:
     return args.handler(args)
 
 
+_LOGS_DIR = Path(__file__).parent.parent / "logs"
+
+
 def _handle_train(args: argparse.Namespace) -> int:
+    import torch
     import pytorch_lightning as pl
+
+    torch.set_float32_matmul_precision("high")
 
     from datamodules import get_datamodule
     from modules import get_module, get_transform
@@ -69,22 +80,60 @@ def _handle_train(args: argparse.Namespace) -> int:
     module_name = module_kwargs.pop("name")
     datamodule_name = datamodule_kwargs.pop("name")
 
+    trainer_kwargs.setdefault("default_root_dir", str(_LOGS_DIR))
+
     wandb_kwargs: dict[str, Any] | None = config.get("wandb")
     if wandb_kwargs is not None:
         from pytorch_lightning.loggers import WandbLogger
+        wandb_kwargs.setdefault("save_dir", str(_LOGS_DIR))
         trainer_kwargs["logger"] = WandbLogger(**wandb_kwargs)
 
     transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop("transform", None)
     if transform_kwargs is not None:
         transform_name = transform_kwargs.pop("name")
-        datamodule_kwargs["transform"] = get_transform(transform_name, **transform_kwargs)
+        datamodule_kwargs["train_transform"] = get_transform(transform_name, **transform_kwargs)
+
+    val_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop("val_transform", None)
+    if val_transform_kwargs is not None:
+        val_transform_name = val_transform_kwargs.pop("name")
+        datamodule_kwargs["val_transform"] = get_transform(val_transform_name, **val_transform_kwargs)
 
     module = get_module(module_name, **module_kwargs)
     datamodule = get_datamodule(datamodule_name, **datamodule_kwargs)
-    trainer = pl.Trainer(**trainer_kwargs)
 
+    datamodule.setup("fit")
+    _print_dataset_summary(datamodule)
+
+    trainer = pl.Trainer(**trainer_kwargs)
     trainer.fit(module, datamodule=datamodule)
     return 0
+
+
+def _print_dataset_summary(datamodule: Any) -> None:
+    train_ds = datamodule._train_dataset
+    val_datasets = datamodule._val_datasets
+    val_names = datamodule.val_dataset_names
+
+    num_places = len(train_ds)
+    images_per_place = train_ds.images_per_place
+    num_supergroups = len(set(train_ds.valid_supergroup_ids))
+
+    print()
+    print("=" * 52)
+    print(f"  Train: {datamodule.train_dataset_name}")
+    print(f"    places:      {num_places:,}")
+    print(f"    images/place:{images_per_place:>6}")
+    print(f"    supergroups: {num_supergroups:,}")
+    print(f"    batch size:  {datamodule.batch_size:,}  "
+          f"({datamodule.places_per_batch} places × {images_per_place} images)")
+
+    for name, ds in zip(val_names, val_datasets):
+        print(f"  Val: {name}")
+        print(f"    queries:  {ds.num_queries:,}")
+        print(f"    database: {ds.num_database:,}")
+
+    print("=" * 52)
+    print()
 
 
 def _handle_eval(args: argparse.Namespace) -> int:
@@ -93,12 +142,15 @@ def _handle_eval(args: argparse.Namespace) -> int:
 
 def _handle_datapipeline(args: argparse.Namespace) -> int:
     if args.list:
-        available = list_pipelines()
-        print("Available datapipelines:")
-        for pipeline_name in available:
-            print(f"- {pipeline_name}")
-        if not available:
-            print("- <none>")
+        category: str | None = getattr(args, "category", None)
+        categories = [category] if category else ["train", "val"]
+        for cat in categories:
+            names = list_pipelines(category=cat)
+            print(f"{cat}:")
+            for pipeline_name in names:
+                print(f"  {pipeline_name}")
+            if not names:
+                print("  <none>")
         return 0
 
     if args.name is None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -21,6 +22,7 @@ class ContrastiveLightningModule(pl.LightningModule):
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-4,
         temperature: float = 0.07,
+        val_recall_ks: list[int] | None = None,
     ) -> None:
         super().__init__()
 
@@ -32,9 +34,12 @@ class ContrastiveLightningModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.temperature = temperature
+        self.val_recall_ks = val_recall_ks or [1, 5, 10]
 
         self.miner = miners.MultiSimilarityMiner()
         self.criterion = losses.NTXentLoss(temperature=temperature)
+
+        self._val_store: dict[int, Tensor] = {}
 
     def forward(self, images: Tensor) -> Tensor:
         return self.model(images)
@@ -59,6 +64,85 @@ class ContrastiveLightningModule(pl.LightningModule):
         self.log("train/loss", loss, prog_bar=True, **log_kwargs)
         self.log("train/accuracy", accuracy, prog_bar=False, **log_kwargs)
         return loss
+
+    def on_validation_epoch_start(self) -> None:
+        self._val_store = {}
+
+    def validation_step(self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0) -> None:
+        inputs: Tensor = batch["inputs"]
+        dataset_indices: Tensor = batch["dataset_indices"]
+
+        with torch.no_grad():
+            embeddings = self(inputs).cpu().float()
+
+        if dataloader_idx not in self._val_store:
+            # Pre-allocate the full embedding matrix on the first batch so that
+            # any OOM failure happens immediately rather than after many batches.
+            dataset = self.trainer.datamodule._val_datasets[dataloader_idx]
+            embed_dim = embeddings.shape[1]
+            self._val_store[dataloader_idx] = torch.empty(
+                len(dataset), embed_dim, dtype=torch.float32
+            )
+
+        self._val_store[dataloader_idx][dataset_indices] = embeddings
+
+    def on_validation_epoch_end(self) -> None:
+        if not self._val_store:
+            return
+
+        datamodule = self.trainer.datamodule
+        val_datasets = datamodule._val_datasets
+        val_names = datamodule.val_dataset_names
+
+        for dl_idx in sorted(self._val_store.keys()):
+            all_embs = self._val_store[dl_idx]
+            dataset = val_datasets[dl_idx]
+            num_db = dataset.num_database
+
+            # Records are laid out as [database..., queries...] by dataset_index
+            db_embs = all_embs[:num_db].numpy()
+            q_embs = all_embs[num_db:].numpy()
+
+            ground_truth = dataset.ground_truth()
+            recalls = self._compute_recalls(q_embs, db_embs, ground_truth)
+
+            name = val_names[dl_idx] if dl_idx < len(val_names) else str(dl_idx)
+            for k, recall in recalls.items():
+                self.log(f"val/{name}/R@{k}", recall, prog_bar=(k == 1))
+
+        self._val_store.clear()
+
+    def _compute_recalls(
+        self,
+        q_embs: np.ndarray,
+        db_embs: np.ndarray,
+        ground_truth: list[tuple[int, list[int]]],
+    ) -> dict[int, float]:
+        import faiss
+
+        q_embs = q_embs.astype(np.float32)
+        db_embs = db_embs.astype(np.float32)
+        faiss.normalize_L2(db_embs)
+        faiss.normalize_L2(q_embs)
+
+        index = faiss.IndexFlatIP(db_embs.shape[1])
+        index.add(db_embs)
+
+        max_k = max(self.val_recall_ks)
+        _, retrieved = index.search(q_embs, min(max_k, len(db_embs)))
+
+        recalls: dict[int, float] = {}
+        for k in self.val_recall_ks:
+            if k > retrieved.shape[1]:
+                recalls[k] = float("nan")
+                continue
+            correct = sum(
+                bool(set(retrieved[i, :k].tolist()) & set(pos_dbids))
+                for i, (_, pos_dbids) in enumerate(ground_truth)
+            )
+            recalls[k] = correct / len(ground_truth) if ground_truth else 0.0
+
+        return recalls
 
     def configure_optimizers(self):
         return torch.optim.AdamW(

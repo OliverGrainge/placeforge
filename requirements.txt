@@ -16,3 +16,4 @@ pytorch-metric-learning
 torchmetrics
 lightning_utilities
 wandb
+faiss-cpu

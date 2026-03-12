@@ -3,7 +3,7 @@ wandb:
   name: sf_xl_small
 
 trainer:
-  max_epochs: 10
+  max_epochs: 250
   accelerator: gpu
   devices: 1
   precision: 16-mixed
@@ -18,10 +18,13 @@ module:
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   temperature: 0.07
+  val_recall_ks: [1, 5, 10]
 
 datamodule:
   name: place_recognition_train
-  index_path: /home/oliver/github/placeforge/data/sf_xl_small_basic/index.parquet
+  train_dataset: sf_xl_small_geometric
+  val_datasets:
+    - pitts30k
   places_per_batch: 32
   images_per_place: 4
   num_workers: 4
@@ -31,4 +34,7 @@ datamodule:
   seed: 42
   transform:
     name: train
+    image_size: 224
+  val_transform:
+    name: eval
     image_size: 224

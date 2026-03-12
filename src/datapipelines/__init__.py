@@ -6,7 +6,8 @@ from .base import Pipeline
 
 PipelineFactory = Callable[[], Pipeline]
 
-_PIPELINE_REGISTRY: dict[str, PipelineFactory] = {}
+# Maps pipeline_name -> (factory, category)
+_PIPELINE_REGISTRY: dict[str, tuple[PipelineFactory, str | None]] = {}
 
 
 def register_pipeline(name: str = "") -> Callable[[PipelineFactory], PipelineFactory]:
@@ -16,7 +17,16 @@ def register_pipeline(name: str = "") -> Callable[[PipelineFactory], PipelineFac
         if pipeline_name in _PIPELINE_REGISTRY:
             raise ValueError(f"Pipeline {pipeline_name!r} is already registered")
 
-        _PIPELINE_REGISTRY[pipeline_name] = factory
+        # Infer category from the subpackage the factory lives in.
+        # datapipelines.train.* -> "train", datapipelines.val.* -> "val"
+        module_parts = (getattr(factory, "__module__", "") or "").split(".")
+        category: str | None = None
+        for part in ("train", "val"):
+            if part in module_parts:
+                category = part
+                break
+
+        _PIPELINE_REGISTRY[pipeline_name] = (factory, category)
         return factory
 
     return decorator
@@ -24,7 +34,7 @@ def register_pipeline(name: str = "") -> Callable[[PipelineFactory], PipelineFac
 
 def get_pipeline(name: str) -> Pipeline:
     try:
-        factory = _PIPELINE_REGISTRY[name]
+        factory, _ = _PIPELINE_REGISTRY[name]
     except KeyError as exc:
         available = ", ".join(sorted(_PIPELINE_REGISTRY)) or "<none>"
         raise KeyError(
@@ -34,12 +44,21 @@ def get_pipeline(name: str) -> Pipeline:
     return factory()
 
 
-def list_pipelines() -> tuple[str, ...]:
-    return tuple(sorted(_PIPELINE_REGISTRY))
+def list_pipelines(category: str | None = None) -> tuple[str, ...]:
+    """Return registered pipeline names, optionally filtered by category."""
+    return tuple(
+        sorted(
+            name
+            for name, (_, cat) in _PIPELINE_REGISTRY.items()
+            if category is None or cat == category
+        )
+    )
 
 
-# Import pipeline modules to ensure side effects (registration) occur on import
-from . import sf_xl_small
+# Import pipeline packages to trigger registration side-effects.
+# Train pipelines live in datapipelines/train/, val in datapipelines/val/.
+from . import train  # noqa: E402, F401
+from . import val    # noqa: E402, F401
 
 
 __all__ = ["Pipeline", "get_pipeline", "list_pipelines", "register_pipeline"]

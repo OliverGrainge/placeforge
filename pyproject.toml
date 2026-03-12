@@ -22,6 +22,7 @@ dependencies = [
     "torchmetrics",
     "lightning_utilities",
     "wandb",
+    "faiss-cpu",
 ]
 
 [build-system]
