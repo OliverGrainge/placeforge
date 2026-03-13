@@ -43,3 +43,8 @@ try:
     from . import dinov2 as _dinov2
 except ModuleNotFoundError:
     _dinov2 = None
+
+try:
+    from . import resnet50 as _resnet50
+except ModuleNotFoundError:
+    _resnet50 = None

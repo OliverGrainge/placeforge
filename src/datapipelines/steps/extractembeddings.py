@@ -8,8 +8,8 @@ import numpy as np
 
 from .base import BaseStep
 
-# DINOv2 model output dimensions (CLS token)
-_DINOV2_EMBED_DIMS: dict[str, int] = {
+# Supported embedding models and their output dimensions.
+_EMBED_DIMS: dict[str, int] = {
     "dinov2_vits14": 384,
     "dinov2_vitb14": 768,
     "dinov2_vitl14": 1024,
@@ -18,10 +18,11 @@ _DINOV2_EMBED_DIMS: dict[str, int] = {
     "dinov2_vitb14_reg": 768,
     "dinov2_vitl14_reg": 1024,
     "dinov2_vitg14_reg": 1536,
+    "dinov2_salad": 8448,
 }
 
 class ExtractEmbeddingsStep(BaseStep):
-    """Extract DINOv2 embeddings for all images and cache them on disk.
+    """Extract image embeddings for all images and cache them on disk.
 
     Embeddings are stored as chunked ``.npy`` files under ``{cache_dir}/batches/``
     with a ``manifest.parquet`` index mapping each image_id to its chunk and
@@ -37,9 +38,9 @@ class ExtractEmbeddingsStep(BaseStep):
         self,
         cache_dir: str | Path,
         *,
-        model_name: str = "dinov2_vitb14_reg",
+        model_name: str = "dinov2_salad",
         batch_size: int = 64,
-        image_size: int = 224,
+        image_size: int = 322,
         device: str | None = None,
         context_key: str = "index",
         image_path_column: str = "image_path",
@@ -50,10 +51,10 @@ class ExtractEmbeddingsStep(BaseStep):
         name: str | None = None,
     ) -> None:
         super().__init__(name=name)
-        if model_name not in _DINOV2_EMBED_DIMS:
+        if model_name not in _EMBED_DIMS:
             raise ValueError(
                 f"Unknown model {model_name!r}. "
-                f"Supported: {sorted(_DINOV2_EMBED_DIMS)}"
+                f"Supported: {sorted(_EMBED_DIMS)}"
             )
         self.cache_dir = Path(cache_dir)
         self.model_name = model_name
@@ -69,7 +70,7 @@ class ExtractEmbeddingsStep(BaseStep):
 
     @property
     def embed_dim(self) -> int:
-        return _DINOV2_EMBED_DIMS[self.model_name]
+        return _EMBED_DIMS[self.model_name]
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         cache_dir = self._resolve_cache_dir(context)
@@ -165,7 +166,7 @@ class ExtractEmbeddingsStep(BaseStep):
     ) -> None:
         self._batches_dir(cache_dir).mkdir(parents=True, exist_ok=True)
 
-        # Suppress DINOv2 xFormers warnings (model falls back to standard attention)
+        # Suppress DINOv2/SALAD xFormers warnings when the optimized kernels are absent.
         warnings.filterwarnings("ignore", message=".*xFormers is not available.*")
 
         device = self._resolve_device()
@@ -213,7 +214,9 @@ class ExtractEmbeddingsStep(BaseStep):
         with torch.no_grad():
             out = model(batch_tensor)
 
-        # DINOv2 returns CLS token as a plain tensor when called directly
+        if isinstance(out, tuple):
+            out = out[0]
+
         return out.cpu().numpy().astype(np.float32)
 
     def _save_chunk(
@@ -255,11 +258,17 @@ class ExtractEmbeddingsStep(BaseStep):
     def _load_model(self, device: Any) -> Any:
         import torch
 
-        model = torch.hub.load(
-            "facebookresearch/dinov2",
-            self.model_name,
-            verbose=False,
-        )
+        if self.model_name == "dinov2_salad":
+            model = torch.hub.load(
+                "serizba/salad",
+                "dinov2_salad",
+            )
+        else:
+            model = torch.hub.load(
+                "facebookresearch/dinov2",
+                self.model_name,
+                verbose=False,
+            )
         model.eval()
         model.to(device)
         return model

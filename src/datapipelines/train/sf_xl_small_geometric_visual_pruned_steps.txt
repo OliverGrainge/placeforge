@@ -1,0 +1,61 @@
+sf_xl_small_geometric_visual_pruned
+
+Produces:
+- processed/train/sf_xl_small_geometric_visual_pruned/index.parquet
+- processed/train/sf_xl_small_geometric_visual_pruned/stats.json
+
+Source data:
+- raw/sf_xl/small
+
+Processing steps:
+1. ReadImagesStep
+   - Recursively scans the raw dataset directory for image files.
+   - Builds one row per image with:
+     image_id, image_path, filename, utm_east, utm_north,
+     utm_zone_number, utm_zone_letter, latitude, longitude,
+     pano_id, heading, timestamp.
+   - If raw/sf_xl/small/metadata.csv exists, it is left-joined onto the image rows.
+
+2. AssignPlaceIdsStep(cell_size_meters=25.0)
+   - Uses the UTM easting/northing of each image.
+   - Converts each point to a 25 m grid cell with floor(easting / 25), floor(northing / 25).
+   - Assigns place_id = "{zone_number}_{zone_letter}_{cell_x}_{cell_y}".
+
+3. ExtractEmbeddingsStep
+   - Computes DINOv2 image embeddings using model dinov2_vitb14_reg.
+   - Uses batch_size=64 and image_size=224.
+   - Stores cached embedding chunks under:
+     feature_store/sf_xl_small/embedding_cache/batches/
+   - Stores an image_id -> (chunk_idx, row_idx) manifest at:
+     feature_store/sf_xl_small/embedding_cache/manifest.parquet
+   - Already cached images are skipped, so this step is resumable.
+
+4. FilterVisualOverlapStep
+   - Runs inside each place_id group.
+   - Loads the embeddings for that place.
+   - Computes each image's mean cosine similarity to the other images in the same place.
+   - Iteratively removes the lowest-cohesion image when it falls below a Tukey lower fence
+     (Q1 - 1.5 * IQR).
+   - Stops when no more outliers are found or only 2 images remain.
+   - Effect: visual outliers inside a geometric place are removed.
+
+5. AssignSuperGroupsStep(cell_size_meters=25.0)
+   - Reuses the same 25 m grid.
+   - Assigns a repeating 2 x 2 supergroup pattern with ids 0..3.
+   - Distinct places inside the same supergroup are guaranteed to be non-adjacent grid cells.
+
+6. RemoveSmallPlacesStep(min_images_per_place=4)
+   - Recounts images per place after visual pruning.
+   - Removes any place that now has fewer than 4 remaining images.
+
+7. SaveFileStep
+   - Saves the final dataframe to index.parquet.
+
+8. DatasetSummaryStep
+   - Computes summary stats including:
+     total_images, num_places, num_supergroups,
+     images_per_place stats, images_per_supergroup stats,
+     places_per_supergroup stats.
+
+9. SaveFileStep
+   - Saves the summary dictionary to stats.json.

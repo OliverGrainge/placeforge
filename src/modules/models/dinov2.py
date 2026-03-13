@@ -18,30 +18,41 @@ class GeMPooling(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         x = x.clamp(min=self.eps).pow(self.p)
-        x = x.mean(dim=1)
+        if x.ndim == 3:
+            x = x.mean(dim=1)
+        elif x.ndim == 4:
+            x = x.mean(dim=(-2, -1))
+        else:
+            raise ValueError(
+                f"GeMPooling expects a 3D token tensor or 4D feature map, got shape {tuple(x.shape)}"
+            )
         return x.pow(1.0 / self.p)
 
 
 @register_model("dinov2_gem")
 class DinoV2GeMModel(nn.Module):
+    BACKBONE_NAME = "dinov2_vits14"
+    PRETRAINED = True
+    GEM_P = 3.0
+    EPS = 1e-6
+
     def __init__(
         self,
         *,
         descriptor_dim: int,
-        backbone_name: str = "dinov2_vits14",
-        pretrained: bool = True,
-        gem_p: float = 3.0,
-        eps: float = 1e-6,
     ) -> None:
         super().__init__()
 
         if descriptor_dim <= 0:
             raise ValueError("descriptor_dim must be positive")
 
-        self.backbone_name = backbone_name
+        self.backbone_name = self.BACKBONE_NAME
         self.descriptor_dim = descriptor_dim
-        self.backbone = self._load_backbone(backbone_name, pretrained=pretrained)
-        self.pool = GeMPooling(p=gem_p, eps=eps)
+        self.backbone = self._load_backbone(
+            self.BACKBONE_NAME,
+            pretrained=self.PRETRAINED,
+        )
+        self.pool = GeMPooling(p=self.GEM_P, eps=self.EPS)
 
         embedding_dim = self._infer_embedding_dim()
         self.projection = nn.Linear(embedding_dim, descriptor_dim)

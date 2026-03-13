@@ -15,27 +15,72 @@ _MAX_CACHED_CHUNKS = 256
 
 
 class FilterVisualOverlapStep(BaseStep):
-    """Discard intra-place images that are visual outliers.
+    """Remove visually inconsistent images within each place.
 
-    For every ``place_id`` group the step:
+    For every ``place_id`` group this step:
 
     1. Loads the DINOv2 embeddings produced by :class:`ExtractEmbeddingsStep`.
-    2. Computes each image's *mean cohesion*: its average cosine similarity to
-       every other image in the place.
-    3. Applies an iterative Tukey-fence outlier test (Q1 − ``tukey_k`` × IQR)
-       to the cohesion scores.  The image with the lowest cohesion is removed
-       if it falls below the fence; the test repeats until no further outliers
-       are found.  No similarity threshold is required — the fence adapts to
-       the distribution of similarities within each place.
+    2. Computes each image's *cohesion*, defined as the mean cosine similarity
+       between that image and all other images in the same place.
+    3. Iteratively removes visual outliers: the image with the lowest cohesion
+       is removed if its cohesion falls below ``keep_threshold``.  The loop
+       repeats on the remaining images until no further outliers are detected.
 
-    Chunk files are loaded on-demand and held in an LRU cache bounded by
-    ``max_cached_chunks`` so memory stays manageable for million-image datasets.
+    After pruning, places with too few remaining images are discarded.  This
+    ensures that each retained place still contains enough visually consistent
+    images to support downstream tasks such as contrastive or triplet training.
+
+    Embedding vectors are stored in chunked ``.npy`` files produced by the
+    embedding extraction step.  Chunk files are loaded on demand and cached
+    using an LRU policy so memory usage remains bounded even for large
+    datasets.
+
+    Parameters
+    ----------
+    keep_threshold : float
+        Absolute cosine similarity cutoff in [-1, 1].  An image is removed if
+        its mean cosine similarity to all other active images in the place falls
+        below this value.  Because cosine similarity is scale-invariant, this
+        threshold is consistent across all places.  A value of 0.3 is a
+        reasonable starting point; increase it to be stricter, decrease to be
+        more permissive.
+
+    min_remaining : int
+        Minimum number of images that must remain in a place after pruning.
+        Places with fewer than this many images after filtering are discarded.
+
+    max_cached_chunks : int
+        Maximum number of embedding chunk files kept in memory simultaneously.
+        This bounds memory usage when working with large embedding caches.
+
+    context_key : str
+        Context key containing the dataset index dataframe.
+
+    cache_dir_context_key : str
+        Context key pointing to the embedding cache directory produced by
+        :class:`ExtractEmbeddingsStep`.
+
+    place_id_column : str
+        Name of the dataframe column identifying place groups.
+
+    image_id_column : str
+        Name of the dataframe column identifying images.
+
+    Notes
+    -----
+    Cohesion is defined as the mean cosine similarity between an image and all
+    other images in the same place.  Images with cohesion below
+    ``keep_threshold`` are treated as visual outliers and removed.
+
+    The pruning procedure operates purely within each place; images are never
+    compared across places.
     """
 
     def __init__(
         self,
         *,
-        tukey_k: float = 1.5,
+        keep_threshold: float = 0.3,
+        min_remaining: int = 5,
         max_cached_chunks: int = _MAX_CACHED_CHUNKS,
         context_key: str = "index",
         cache_dir_context_key: str = "embedding_cache_dir",
@@ -44,7 +89,8 @@ class FilterVisualOverlapStep(BaseStep):
         name: str | None = None,
     ) -> None:
         super().__init__(name=name)
-        self.tukey_k = tukey_k
+        self.keep_threshold = keep_threshold
+        self.min_remaining = min_remaining
         self.max_cached_chunks = max_cached_chunks
         self.context_key = context_key
         self.cache_dir_context_key = cache_dir_context_key
@@ -154,44 +200,37 @@ class FilterVisualOverlapStep(BaseStep):
     def _filter_place(
         self, image_ids: list[str], embeddings: np.ndarray
     ) -> list[str]:
-        """Return image_ids after iteratively removing low-cohesion outliers.
-
-        Each iteration:
-        - Compute every active image's mean cosine similarity to the other
-          active images (its *cohesion*).
-        - Compute Q1, Q3, IQR over those cohesion scores.
-        - If the image with the lowest cohesion falls below Q1 − tukey_k×IQR,
-          remove it and repeat; otherwise stop.
-
-        Stops early when fewer than 3 images remain so we never over-prune a
-        place into uselessness (the downstream RemoveSmallPlacesStep handles
-        the minimum-size requirement).
-        """
         n = len(image_ids)
-        if n <= 2:
-            return list(image_ids)
 
-        # Pre-compute the full n×n cosine-similarity matrix once.
+        if n == 0:
+            return []
+
+        # Pre-compute cosine similarity matrix
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         normed = embeddings / np.maximum(norms, 1e-8)
-        sim_full = normed @ normed.T  # [n, n], diagonal = 1.0
+        sim_full = normed @ normed.T
 
         active = list(range(n))
 
-        while len(active) > 2:
-            sub = sim_full[np.ix_(active, active)]
-            # Mean similarity to *other* images (exclude self on the diagonal)
+        while len(active) > 1:
+            sub = sim_full[np.ix_(active, active)].copy()
             np.fill_diagonal(sub, np.nan)
-            cohesion = np.nanmean(sub, axis=1)  # shape [len(active)]
 
-            q1, q3 = np.percentile(cohesion, [25, 75])
-            iqr = q3 - q1
-            lower_fence = q1 - self.tukey_k * iqr
+            cohesion = np.nanmean(sub, axis=1)
 
-            worst_local = int(np.argmin(cohesion))
-            if cohesion[worst_local] < lower_fence:
-                active.pop(worst_local)
-            else:
+            if np.all(np.isnan(cohesion)):
                 break
 
-        return [image_ids[i] for i in active]
+            worst_local = int(np.nanargmin(cohesion))
+
+            if cohesion[worst_local] < self.keep_threshold:
+                active.pop(worst_local)
+            else:
+                break  # All remaining images are coherent enough
+
+        result = [image_ids[i] for i in active]
+
+        # Discard the whole place if too few coherent images remain
+        if len(result) < self.min_remaining:
+            return []
+        return result

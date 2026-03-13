@@ -16,9 +16,11 @@ from datapipelines.steps import (
 
 SF_XL_SMALL_MATCH_RADIUS_METERS = 25.0
 SF_XL_SMALL_MIN_IMAGES_PER_PLACE = 4
-SF_XL_SMALL_EMBEDDING_MODEL = "dinov2_vitb14_reg"
+SF_XL_SMALL_SUPERGROUP_CELL_SIZE = 500.0
+SF_XL_SMALL_SUPERGROUP_ADJACENCY_CELLS = 3
+SF_XL_SMALL_EMBEDDING_MODEL = "dinov2_salad"
 SF_XL_SMALL_EMBEDDING_BATCH_SIZE = 64
-SF_XL_SMALL_EMBEDDING_IMAGE_SIZE = 224
+SF_XL_SMALL_EMBEDDING_IMAGE_SIZE = 322
 
 
 def _sf_xl_small_raw_dir():
@@ -56,7 +58,10 @@ def build_sf_xl_small_pipeline() -> Pipeline:
             RemoveSmallPlacesStep(
                 min_images_per_place=SF_XL_SMALL_MIN_IMAGES_PER_PLACE
             ),
-            AssignSuperGroupsStep(cell_size_meters=SF_XL_SMALL_MATCH_RADIUS_METERS),
+            AssignSuperGroupsStep(
+                cell_size_meters=SF_XL_SMALL_SUPERGROUP_CELL_SIZE,
+                adjacency_cells=SF_XL_SMALL_SUPERGROUP_ADJACENCY_CELLS,
+            ),
             *_dataset_outputs(output_dir),
         ],
     )
@@ -76,12 +81,15 @@ def build_sf_xl_small_visual_pipeline() -> Pipeline:
                 batch_size=SF_XL_SMALL_EMBEDDING_BATCH_SIZE,
                 image_size=SF_XL_SMALL_EMBEDDING_IMAGE_SIZE,
                 cache_dir_context_key="embedding_cache_dir",
-                name="sf_xl_small_visual_dinov2_vitb14_reg",
+                name="sf_xl_small_visual_dinov2_salad",
             ),
-            FilterVisualOverlapStep(),
-            AssignSuperGroupsStep(cell_size_meters=SF_XL_SMALL_MATCH_RADIUS_METERS),
-            RemoveSmallPlacesStep(
-                min_images_per_place=SF_XL_SMALL_MIN_IMAGES_PER_PLACE
+            FilterVisualOverlapStep(
+                min_remaining=SF_XL_SMALL_MIN_IMAGES_PER_PLACE,
+                keep_threshold=0.3,
+            ),
+            AssignSuperGroupsStep(
+                cell_size_meters=SF_XL_SMALL_SUPERGROUP_CELL_SIZE,
+                adjacency_cells=SF_XL_SMALL_SUPERGROUP_ADJACENCY_CELLS,
             ),
             *_dataset_outputs(output_dir),
         ],

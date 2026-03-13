@@ -103,7 +103,7 @@ class PlaceImageTrainDataset:
 
         places = []
         supergroup_ids = []
-        for place_id, (supergroup_id, image_ids) in place_data.items():
+        for place_id, (supergroup_id, image_ids) in sorted(place_data.items()):
             places.append((place_id, supergroup_id, image_ids))
             supergroup_ids.append(supergroup_id)
 

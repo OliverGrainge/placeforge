@@ -1,6 +1,6 @@
 wandb:
   project: placeforge
-  name: sf_xl_small
+  name: sf_xl_small_geometric_visual_pruned
 
 trainer:
   max_epochs: 250
@@ -21,7 +21,7 @@ module:
 
 datamodule:
   name: place_recognition_train
-  train_dataset: sf_xl_small_geometric
+  train_dataset: sf_xl_small_geometric_visual_pruned
   val_datasets:
     - pitts30k
   places_per_batch: 32
