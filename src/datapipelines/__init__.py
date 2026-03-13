@@ -58,7 +58,10 @@ def list_pipelines(category: str | None = None) -> tuple[str, ...]:
 # Import pipeline packages to trigger registration side-effects.
 # Train pipelines live in datapipelines/train/, val in datapipelines/val/.
 from . import train  # noqa: E402, F401
-from . import val    # noqa: E402, F401
+try:
+    from . import val  # noqa: E402, F401
+except ImportError:
+    pass  # val pipelines require extra steps (splitids, geomatches, etc.)
 
 
 __all__ = ["Pipeline", "get_pipeline", "list_pipelines", "register_pipeline"]

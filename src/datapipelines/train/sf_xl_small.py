@@ -7,7 +7,9 @@ from datapipelines.steps import (
     ReadImagesStep,
     AssignPlaceIdStep,
     AssignSuperGroupStep,
+    ComputeEmbeddingStep,
     SaveTrainDataset,
+    SummaryTrainDataset,
 )
 
 
@@ -20,6 +22,9 @@ def build_test_pipeline() -> Pipeline:
             ReadImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
+            ComputeEmbeddingStep(name=PIPELINE_NAME, batch_size=64, num_workers=8),
             SaveTrainDataset(name=PIPELINE_NAME),
+            SummaryTrainDataset(name=PIPELINE_NAME),
+            
         ],
     )

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import pandas as pd 
+import os
 
 from .base import BaseStep
 
@@ -10,27 +12,27 @@ class ReadImagesStep(BaseStep):
     def __init__(self, data_root: str | Path) -> None:
         super().__init__()
         self.data_root = Path(data_root)
+        self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        try:
-            import pandas as pd
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "ReadImagesStep requires pandas. Install it with `pip install pandas`."
-            ) from exc
-
         if not self.data_root.exists():
             raise FileNotFoundError(f"Data root does not exist: {self.data_root}")
 
+        paths = list(self._iter_image_paths())
+        if self.pbar is not None:
+            self.pbar.reset(total=len(paths))
+
         records = []
-        for image_id, image_path in enumerate(self._iter_image_paths()):
+        for image_id, image_path in enumerate(paths):
             utm_east, utm_north = self._parse_utm(image_path.name)
             records.append({
                 "image_id": image_id,
-                "image_path": str(image_path.relative_to(self.data_root)),
+                "image_path": str(image_path.relative_to(self.raw_dir)),
                 "utm_east": utm_east,
                 "utm_north": utm_north,
             })
+            if self.pbar is not None:
+                self.pbar.update(1)
 
         return {**context, "dataset": pd.DataFrame(records)}
 

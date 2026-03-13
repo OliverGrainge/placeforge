@@ -14,7 +14,7 @@ class SaveTrainDataset(BaseStep):
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         processed_dir = os.environ["PLACEFORGE_PROCESSED_DIR"]
-        output_path = Path(processed_dir) / self.name / "dataset.parquet"
+        output_path = Path(processed_dir) / "train"/ self.name / "dataset.parquet"
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         context["dataset"].to_parquet(output_path)

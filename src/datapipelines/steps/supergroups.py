@@ -16,10 +16,4 @@ class AssignSuperGroupStep(BaseStep):
 
         df["supergroup_id"] = (df["cell_x"] % period) * period + (df["cell_y"] % period)
 
-        # Remap place_id to 0..N within each supergroup
-        df["place_id"] = (
-            df.groupby("supergroup_id")["place_id"]
-            .transform(lambda s: s.rank(method="dense").astype(int) - 1)
-        )
-
         return {**context, "dataset": df}
