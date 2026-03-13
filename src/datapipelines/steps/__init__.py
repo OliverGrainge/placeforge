@@ -1,3 +1,4 @@
+from .aggregateembeddings import AggregateEmbeddingsStep
 from .base import BaseStep
 from .extractembeddings import ExtractEmbeddingsStep
 from .filtermatches import RemoveUnmatchedImagesStep
@@ -15,6 +16,7 @@ from .summary import DatasetSummaryStep
 from .supergroups import AssignSuperGroupsStep
 
 __all__ = [
+    "AggregateEmbeddingsStep",
     "BaseStep",
     "AssignSplitIdsStep",
     "ComputeGeoMatchesStep",

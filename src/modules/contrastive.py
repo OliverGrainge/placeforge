@@ -21,23 +21,25 @@ class ContrastiveLightningModule(pl.LightningModule):
         model_kwargs: dict[str, Any] | None = None,
         learning_rate: float = 1e-4,
         weight_decay: float = 1e-4,
-        temperature: float = 0.07,
         val_recall_ks: list[int] | None = None,
+        # MultiSimilarityLoss + MultiSimilarityMiner (designed to work together)
+        ms_alpha: float = 2.0,
+        ms_beta: float = 50.0,
+        ms_base: float = 0.5,
+        miner_epsilon: float = 0.1,
     ) -> None:
         super().__init__()
-
-        if temperature <= 0:
-            raise ValueError("temperature must be positive")
 
         self.save_hyperparameters()
         self.model = get_model(model_name, **(model_kwargs or {}))
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
-        self.temperature = temperature
         self.val_recall_ks = val_recall_ks or [1, 5, 10]
 
-        self.miner = miners.MultiSimilarityMiner()
-        self.criterion = losses.NTXentLoss(temperature=temperature)
+        self.miner = miners.MultiSimilarityMiner(epsilon=miner_epsilon)
+        self.criterion = losses.MultiSimilarityLoss(
+            alpha=ms_alpha, beta=ms_beta, base=ms_base
+        )
 
         self._val_store: dict[int, Tensor] = {}
 
