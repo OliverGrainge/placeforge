@@ -1,168 +1,351 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
 from .base import BaseStep
 
-
-_Reduction = Literal["mean", "median"]
+_MAX_CACHED_CHUNKS = 256
+_REDUCTIONS: dict[str, Any] = {
+    "first": lambda values: values[0],
+    "mean": lambda values: values.mean(axis=0),
+    "median": lambda values: np.median(values, axis=0),
+    "min": lambda values: values.min(axis=0),
+    "max": lambda values: values.max(axis=0),
+}
 
 
 class AggregateEmbeddingsStep(BaseStep):
-    """Aggregate per-image embeddings into one embedding per unique key value.
+    """Aggregate extracted embeddings over a grouping key and cache the result.
 
-    Reads embeddings written by ``ExtractEmbeddingsStep`` and reduces all image
-    embeddings sharing the same value of ``key`` (e.g. ``place_id``) into a
-    single vector using the chosen ``reduction``.
+    This step consumes the chunked cache produced by :class:`ExtractEmbeddingsStep`,
+    groups rows in the dataset index by ``group_by_column``, reduces the member
+    embeddings with ``reduction``, and writes the aggregated vectors back out in
+    the same ``batches/*.npy`` + ``manifest.parquet`` layout.
 
-    Results are persisted as a *feature store* under ``feature_store_dir``:
-
-    .. code-block:: text
-
-        feature_store_dir/
-            embeddings.npy   # float32 array, shape (n_keys, embed_dim)
-            ids.parquet      # single-column DataFrame: the ordered key values
-
-    When ``recompute=False`` (default) and the feature store already exists the
-    step loads from disk and skips aggregation entirely.
-
-    The step adds two keys to the context:
-
-    * ``output_embeddings_context_key`` – ``np.ndarray`` of shape
-      ``(n_keys, embed_dim)``, one row per unique key value.
-    * ``output_ids_context_key`` – ``list`` of key values whose order matches
-      the rows of the embeddings array.
+    The resulting cache is resumable in the same way as the extraction cache:
+    already-materialized groups are skipped on subsequent runs.
     """
 
     def __init__(
         self,
-        feature_store_dir: str | Path,
+        cache_dir: str | Path,
         *,
-        key: str = "place_id",
-        reduction: _Reduction = "mean",
-        recompute: bool = False,
+        group_by_column: str = "place_id",
+        source_id_column: str = "image_id",
+        reduction: str = "mean",
+        batch_size: int = 256,
+        normalize: bool = False,
+        max_cached_chunks: int = _MAX_CACHED_CHUNKS,
         context_key: str = "index",
-        image_id_column: str = "image_id",
-        embedding_cache_dir_context_key: str = "embedding_cache_dir",
-        embedding_dim_context_key: str = "embedding_dim",
-        output_embeddings_context_key: str = "place_embeddings",
-        output_ids_context_key: str = "place_embedding_ids",
+        source_cache_dir_context_key: str = "embedding_cache_dir",
+        cache_dir_context_key: str | None = None,
+        output_cache_dir_context_key: str = "aggregated_embedding_cache_dir",
+        output_index_path_context_key: str = "aggregated_embedding_index_path",
+        output_dim_context_key: str = "aggregated_embedding_dim",
         name: str | None = None,
     ) -> None:
         super().__init__(name=name)
-        if reduction not in ("mean", "median"):
-            raise ValueError(f"reduction must be 'mean' or 'median', got {reduction!r}")
-        self.feature_store_dir = Path(feature_store_dir)
-        self.key = key
+        if reduction not in _REDUCTIONS:
+            raise ValueError(
+                f"Unknown reduction {reduction!r}. Supported: {sorted(_REDUCTIONS)}"
+            )
+
+        self.cache_dir = Path(cache_dir)
+        self.group_by_column = group_by_column
+        self.source_id_column = source_id_column
         self.reduction = reduction
-        self.recompute = recompute
+        self.batch_size = batch_size
+        self.normalize = normalize
+        self.max_cached_chunks = max_cached_chunks
         self.context_key = context_key
-        self.image_id_column = image_id_column
-        self.embedding_cache_dir_context_key = embedding_cache_dir_context_key
-        self.embedding_dim_context_key = embedding_dim_context_key
-        self.output_embeddings_context_key = output_embeddings_context_key
-        self.output_ids_context_key = output_ids_context_key
-
-    # ------------------------------------------------------------------
-    # Feature store paths
-    # ------------------------------------------------------------------
-
-    def _embeddings_path(self) -> Path:
-        return self.feature_store_dir / "embeddings.npy"
-
-    def _ids_path(self) -> Path:
-        return self.feature_store_dir / "ids.parquet"
-
-    def _store_exists(self) -> bool:
-        return self._embeddings_path().exists() and self._ids_path().exists()
-
-    # ------------------------------------------------------------------
-    # Run
-    # ------------------------------------------------------------------
+        self.source_cache_dir_context_key = source_cache_dir_context_key
+        self.cache_dir_context_key = cache_dir_context_key
+        self.output_cache_dir_context_key = output_cache_dir_context_key
+        self.output_index_path_context_key = output_index_path_context_key
+        self.output_dim_context_key = output_dim_context_key
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        if not self.recompute and self._store_exists():
-            embeddings, key_ids = self._load_store()
-        else:
-            cache_dir = Path(context[self.embedding_cache_dir_context_key])
-            embed_dim: int = context[self.embedding_dim_context_key]
-            dataframe = context[self.context_key]
-            embeddings, key_ids = self._aggregate(cache_dir, embed_dim, dataframe)
-            self._save_store(embeddings, key_ids)
+        dataframe = context[self.context_key]
+        source_cache_dir = Path(context[self.source_cache_dir_context_key])
+        cache_dir = self._resolve_cache_dir(context)
+
+        source_manifest = self._load_source_manifest(source_cache_dir)
+        embed_dim = self._resolve_embed_dim(context, source_cache_dir)
+        cached_group_ids = self._load_cached_group_ids(cache_dir)
+        total_groups = int(dataframe[self.group_by_column].nunique(dropna=False))
+        completed_groups = self._count_completed_groups(dataframe, cached_group_ids)
+
+        if completed_groups < total_groups:
+            self._aggregate_and_cache(
+                dataframe,
+                source_manifest,
+                source_cache_dir,
+                cache_dir,
+                cached_group_ids=cached_group_ids,
+                embed_dim=embed_dim,
+                total_groups=total_groups,
+                completed_groups=completed_groups,
+            )
 
         context = dict(context)
-        context[self.output_embeddings_context_key] = embeddings
-        context[self.output_ids_context_key] = key_ids
+        context[self.output_cache_dir_context_key] = cache_dir
+        context[self.output_index_path_context_key] = self._manifest_path(cache_dir)
+        context[self.output_dim_context_key] = embed_dim
         return context
 
-    # ------------------------------------------------------------------
-    # Aggregation
-    # ------------------------------------------------------------------
+    def _resolve_cache_dir(self, context: dict[str, Any]) -> Path:
+        if self.cache_dir_context_key and self.cache_dir_context_key in context:
+            return Path(context[self.cache_dir_context_key])
+        return self.cache_dir
 
-    def _aggregate(
-        self,
-        cache_dir: Path,
-        embed_dim: int,
-        dataframe: Any,
-    ) -> tuple[np.ndarray, list]:
+    def _batches_dir(self, cache_dir: Path) -> Path:
+        return cache_dir / "batches"
+
+    def _manifest_path(self, cache_dir: Path) -> Path:
+        return cache_dir / "manifest.parquet"
+
+    def _load_source_manifest(self, cache_dir: Path) -> dict[Any, tuple[int, int]]:
         import pandas as pd
 
-        manifest = pd.read_parquet(cache_dir / "manifest.parquet")
+        manifest_path = cache_dir / "manifest.parquet"
+        if not manifest_path.exists():
+            raise FileNotFoundError(
+                f"Embedding manifest not found at {manifest_path}. "
+                "Run ExtractEmbeddingsStep first."
+            )
 
-        index_cols = dataframe[[self.image_id_column, self.key]]
-        merged = manifest.merge(index_cols, on=self.image_id_column, how="inner")
+        manifest = pd.read_parquet(manifest_path)
+        return dict(
+            zip(
+                manifest[self.source_id_column].tolist(),
+                zip(manifest["chunk_idx"].tolist(), manifest["row_idx"].tolist()),
+            )
+        )
 
-        key_ids_ordered = merged[self.key].unique().tolist()
-        num_keys = len(key_ids_ordered)
-        key_to_idx = {k: i for i, k in enumerate(key_ids_ordered)}
+    def _resolve_embed_dim(self, context: dict[str, Any], source_cache_dir: Path) -> int:
+        context_dim = context.get("embedding_dim")
+        if context_dim is not None:
+            return int(context_dim)
 
-        batches_dir = cache_dir / "batches"
-        chunks: dict[int, np.ndarray] = {}
-        for chunk_idx in merged["chunk_idx"].unique():
-            chunk_path = batches_dir / f"batch_{chunk_idx:06d}.npy"
-            chunks[int(chunk_idx)] = np.load(chunk_path)
+        batch_paths = sorted(self._batches_dir(source_cache_dir).glob("batch_*.npy"))
+        if not batch_paths:
+            raise FileNotFoundError(
+                f"No embedding batches found in {self._batches_dir(source_cache_dir)}"
+            )
 
-        key_rows: list[list[np.ndarray]] = [[] for _ in range(num_keys)]
-        for _, row in merged.iterrows():
-            embedding = chunks[int(row["chunk_idx"])][int(row["row_idx"])]
-            key_rows[key_to_idx[row[self.key]]].append(embedding)
+        sample = np.load(batch_paths[0], mmap_mode="r")
+        return int(sample.shape[1])
 
-        reduce_fn = np.mean if self.reduction == "mean" else np.median
-        embeddings = np.empty((num_keys, embed_dim), dtype=np.float32)
+    def _load_cached_group_ids(self, cache_dir: Path) -> set[Any]:
+        manifest = self._load_output_manifest(cache_dir)
+        if manifest is None:
+            return set()
+        return {self._cache_key(group_id) for group_id in manifest[self.group_by_column].tolist()}
+
+    def _count_completed_groups(self, dataframe: Any, cached_group_ids: set[Any]) -> int:
+        if not cached_group_ids:
+            return 0
+
+        unique_groups = dataframe[[self.group_by_column]].drop_duplicates()
+        return sum(
+            1
+            for group_id in unique_groups[self.group_by_column].tolist()
+            if self._cache_key(group_id) in cached_group_ids
+        )
+
+    def _cache_key(self, value: Any) -> Any:
+        try:
+            if np.isnan(value):
+                return "__nan__"
+        except TypeError:
+            pass
+        return value
+
+    def _load_output_manifest(self, cache_dir: Path) -> Any:
+        import pandas as pd
+
+        manifest_path = self._manifest_path(cache_dir)
+        if not manifest_path.exists():
+            return None
+
+        manifest = pd.read_parquet(manifest_path)
+        if manifest.empty:
+            return manifest
+
+        valid_chunks = {
+            int(path.stem.split("_")[1])
+            for path in self._batches_dir(cache_dir).glob("batch_*.npy")
+        }
+        repaired = manifest[manifest["chunk_idx"].isin(valid_chunks)].reset_index(drop=True)
+        if len(repaired) != len(manifest):
+            self._write_manifest(cache_dir, repaired)
+        return repaired
+
+    def _next_chunk_idx(self, cache_dir: Path) -> int:
+        max_idx = -1
+        for path in self._batches_dir(cache_dir).glob("batch_*.npy"):
+            try:
+                chunk_idx = int(path.stem.split("_")[1])
+            except (IndexError, ValueError):
+                continue
+            max_idx = max(max_idx, chunk_idx)
+        return max_idx + 1
+
+    def _aggregate_and_cache(
+        self,
+        dataframe: Any,
+        source_manifest: dict[Any, tuple[int, int]],
+        source_cache_dir: Path,
+        cache_dir: Path,
+        *,
+        cached_group_ids: set[Any],
+        embed_dim: int,
+        total_groups: int,
+        completed_groups: int,
+    ) -> None:
+        import pandas as pd
+
+        self._batches_dir(cache_dir).mkdir(parents=True, exist_ok=True)
+        chunk_lru: OrderedDict[int, np.ndarray] = OrderedDict()
+        chunk_idx = self._next_chunk_idx(cache_dir)
+        pending_group_ids: list[Any] = []
+        pending_embeddings: list[np.ndarray] = []
+
+        existing_manifest = self._load_output_manifest(cache_dir)
+        accumulated_rows: list[dict[str, Any]] = (
+            existing_manifest.to_dict("records") if existing_manifest is not None else []
+        )
 
         with self.progress(
-            total=num_keys,
-            desc=f"aggregate embeddings by {self.key} ({self.reduction})",
+            total=total_groups,
+            initial=completed_groups,
+            desc="aggregate embeddings",
         ) as progress:
-            for i, rows in enumerate(key_rows):
-                embeddings[i] = reduce_fn(np.stack(rows), axis=0) if rows else np.zeros(embed_dim, dtype=np.float32)
-                progress.update(1)
+            for group_id, group in dataframe.groupby(self.group_by_column, sort=False, dropna=False):
+                if self._cache_key(group_id) in cached_group_ids:
+                    continue
 
-        return embeddings, key_ids_ordered
+                source_ids = group[self.source_id_column].tolist()
+                source_embeddings = self._load_group_embeddings(
+                    source_ids,
+                    source_manifest,
+                    source_cache_dir,
+                    chunk_lru,
+                )
+                pending_group_ids.append(group_id)
+                pending_embeddings.append(self._reduce(source_embeddings, embed_dim))
 
-    # ------------------------------------------------------------------
-    # Feature store I/O
-    # ------------------------------------------------------------------
+                if len(pending_group_ids) < self.batch_size:
+                    continue
 
-    def _save_store(self, embeddings: np.ndarray, key_ids: list) -> None:
+                rows = self._save_chunk(
+                    cache_dir,
+                    chunk_idx,
+                    np.stack(pending_embeddings).astype(np.float32),
+                    pending_group_ids,
+                )
+                accumulated_rows.extend(rows)
+                self._write_manifest(cache_dir, pd.DataFrame(accumulated_rows))
+                chunk_idx += 1
+                progress.update(len(pending_group_ids))
+                pending_group_ids = []
+                pending_embeddings = []
+
+            if pending_group_ids:
+                rows = self._save_chunk(
+                    cache_dir,
+                    chunk_idx,
+                    np.stack(pending_embeddings).astype(np.float32),
+                    pending_group_ids,
+                )
+                accumulated_rows.extend(rows)
+                self._write_manifest(cache_dir, pd.DataFrame(accumulated_rows))
+                progress.update(len(pending_group_ids))
+
+    def _load_group_embeddings(
+        self,
+        source_ids: list[Any],
+        source_manifest: dict[Any, tuple[int, int]],
+        source_cache_dir: Path,
+        chunk_lru: OrderedDict[int, np.ndarray],
+    ) -> np.ndarray:
+        rows: list[np.ndarray] = []
+        for source_id in source_ids:
+            entry = source_manifest.get(source_id)
+            if entry is None:
+                continue
+            chunk_idx, row_idx = entry
+            rows.append(self._get_chunk(chunk_idx, source_cache_dir, chunk_lru)[row_idx])
+
+        if not rows:
+            return np.empty((0, 0), dtype=np.float32)
+        return np.stack(rows).astype(np.float32)
+
+    def _get_chunk(
+        self,
+        chunk_idx: int,
+        cache_dir: Path,
+        chunk_lru: OrderedDict[int, np.ndarray],
+    ) -> np.ndarray:
+        if chunk_idx in chunk_lru:
+            chunk_lru.move_to_end(chunk_idx)
+            return chunk_lru[chunk_idx]
+
+        chunk_path = self._batches_dir(cache_dir) / f"batch_{chunk_idx:06d}.npy"
+        data = np.load(chunk_path)
+        chunk_lru[chunk_idx] = data
+        chunk_lru.move_to_end(chunk_idx)
+
+        while len(chunk_lru) > self.max_cached_chunks:
+            chunk_lru.popitem(last=False)
+
+        return data
+
+    def _reduce(self, values: np.ndarray, embed_dim: int) -> np.ndarray:
+        if values.size == 0:
+            reduced = np.zeros(embed_dim, dtype=np.float32)
+        else:
+            reduced = np.asarray(_REDUCTIONS[self.reduction](values), dtype=np.float32)
+
+        if self.normalize:
+            norm = np.linalg.norm(reduced)
+            if norm > 0:
+                reduced = reduced / norm
+
+        return reduced.astype(np.float32, copy=False)
+
+    def _save_chunk(
+        self,
+        cache_dir: Path,
+        chunk_idx: int,
+        embeddings: np.ndarray,
+        group_ids: list[Any],
+    ) -> list[dict[str, Any]]:
+        chunk_path = self._batches_dir(cache_dir) / f"batch_{chunk_idx:06d}.npy"
+        tmp_path = chunk_path.with_suffix(".tmp.npy")
+        np.save(tmp_path, embeddings)
+        tmp_path.replace(chunk_path)
+        return [
+            {self.group_by_column: group_id, "chunk_idx": chunk_idx, "row_idx": row_idx}
+            for row_idx, group_id in enumerate(group_ids)
+        ]
+
+    def _flush_manifest(self, cache_dir: Path, new_rows: list[dict[str, Any]]) -> None:
         import pandas as pd
 
-        self.feature_store_dir.mkdir(parents=True, exist_ok=True)
+        new_df = pd.DataFrame(new_rows)
+        manifest_path = self._manifest_path(cache_dir)
+        if manifest_path.exists():
+            existing = pd.read_parquet(manifest_path)
+            new_df = pd.concat([existing, new_df], ignore_index=True)
+        self._write_manifest(cache_dir, new_df)
 
-        tmp_emb = self._embeddings_path().with_suffix(".tmp.npy")
-        np.save(tmp_emb, embeddings)
-        tmp_emb.replace(self._embeddings_path())
-
-        tmp_ids = self._ids_path().with_suffix(".tmp.parquet")
-        pd.DataFrame({self.key: key_ids}).to_parquet(tmp_ids, index=False)
-        tmp_ids.replace(self._ids_path())
-
-    def _load_store(self) -> tuple[np.ndarray, list]:
-        import pandas as pd
-
-        embeddings = np.load(self._embeddings_path())
-        key_ids = pd.read_parquet(self._ids_path())[self.key].tolist()
-        return embeddings, key_ids
+    def _write_manifest(self, cache_dir: Path, dataframe: Any) -> None:
+        manifest_path = self._manifest_path(cache_dir)
+        tmp_path = manifest_path.with_suffix(".tmp.parquet")
+        dataframe.to_parquet(tmp_path, index=False)
+        tmp_path.replace(manifest_path)
