@@ -6,8 +6,7 @@ from sklearn.neighbors import BallTree
 from .base import BaseStep
 
 
-
-class ComputeMatchesStep(BaseStep):
+class ComputeValMatchesStep(BaseStep):
     def __init__(self, radius_meters: int) -> None:
         self.radius_meters = radius_meters
 
