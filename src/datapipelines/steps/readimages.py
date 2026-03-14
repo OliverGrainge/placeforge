@@ -8,7 +8,7 @@ import os
 from .base import BaseStep
 
 
-class ReadImagesStep(BaseStep):
+class ReadTrainImagesStep(BaseStep):
     def __init__(self, data_root: str | Path) -> None:
         super().__init__()
         self.data_root = Path(data_root)
@@ -34,7 +34,7 @@ class ReadImagesStep(BaseStep):
             if self.pbar is not None:
                 self.pbar.update(1)
 
-        return {**context, "dataset": pd.DataFrame(records)}
+        return {**context, "traindataset": pd.DataFrame(records)}
 
     def _iter_image_paths(self):
         for path in sorted(self.data_root.rglob("*")):
@@ -54,3 +54,42 @@ class ReadImagesStep(BaseStep):
         utm_east = to_float(values[0]) if len(values) > 0 else None
         utm_north = to_float(values[1]) if len(values) > 1 else None
         return utm_east, utm_north
+
+
+
+class ReadValImagesStep(BaseStep):
+    def __init__(self, query_path: str | Path, database_path: str | Path) -> None:
+        super().__init__()
+        self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
+        self.query_path = self.raw_dir / query_path
+        self.database_path = self.raw_dir / database_path
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        for path in (self.query_path, self.database_path):
+            if not path.exists():
+                raise FileNotFoundError(f"Directory does not exist: {path}")
+
+        query_paths = list(self._iter_image_paths(self.query_path))
+        database_paths = list(self._iter_image_paths(self.database_path))
+
+        if self.pbar is not None:
+            self.pbar.reset(total=len(query_paths) + len(database_paths))
+
+        records = []
+        for image_id, (image_path, is_query) in enumerate(
+            [(p, True) for p in query_paths] + [(p, False) for p in database_paths]
+        ):
+            records.append({
+                "image_id": image_id,
+                "image_path": str(image_path.relative_to(self.raw_dir)),
+                "is_query": is_query,
+            })
+            if self.pbar is not None:
+                self.pbar.update(1)
+
+        return {**context, "valdataset": pd.DataFrame(records)}
+
+    def _iter_image_paths(self, root: Path):
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+                yield path

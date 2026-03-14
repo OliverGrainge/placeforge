@@ -73,7 +73,7 @@ class ComputeEmbeddingStep:
     # ---- public API ----------------------------------------------------------
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["dataset"].sort_values("place_id").reset_index(drop=True)
+        df = context["traindataset"].sort_values("place_id").reset_index(drop=True)
 
         if not self.image_cache.exists:
             model = self._load_model()

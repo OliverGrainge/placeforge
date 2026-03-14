@@ -18,12 +18,12 @@ class AssignSuperGroupStep(BaseStep):
         self.adjacency_cells = adjacency_cells
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["dataset"].copy()
+        df = context["traindataset"].copy()
         period = self.adjacency_cells + 1
 
         df["supergroup_id"] = (df["cell_x"] % period) * period + (df["cell_y"] % period)
 
-        return {**context, "dataset": df}
+        return {**context, "traindataset": df}
 
 
 class AssignSuperGroupWithEmbedStep(BaseStep):
@@ -68,7 +68,7 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         self.place_cache = EmbeddingCache(feature_dir / "places")
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["dataset"].copy()
+        df = context["traindataset"].copy()
         period = self.ADJACENCY_CELLS + 1  # 3
 
         # --- 1. Outer group from spatial modular arithmetic -----------------
@@ -141,7 +141,7 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         place_to_sg = place_df.set_index("place_id")["supergroup_id"]
         df["supergroup_id"] = df["place_id"].map(place_to_sg).astype(np.int64)
 
-        return {**context, "dataset": df}
+        return {**context, "traindataset": df}
 
     def _allocate_clusters(
         self,

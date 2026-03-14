@@ -19,7 +19,7 @@ class AssignPlaceIdStep(BaseStep):
         self.cell_size_meters = cell_size_meters
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["dataset"].copy()
+        df = context["traindataset"].copy()
         cell_size = self.cell_size_meters
 
         df["cell_x"] = (df["utm_east"] / cell_size).apply(floor)
@@ -27,10 +27,11 @@ class AssignPlaceIdStep(BaseStep):
         df["place_id"] = df["cell_x"] * (df["cell_y"].max() + 1) + df["cell_y"]
         df = df.sort_values("place_id").reset_index(drop=True)
 
-        return {**context, "dataset": df}
+        return {**context, "traindataset": df}
 
 
-class FilterPlaceOutliersStep(BaseStep):
+
+class AssignPlaceIdWithEmbedStep(BaseStep):
     """
     Iteratively remove incoherent images from each place.
  
@@ -66,7 +67,7 @@ class FilterPlaceOutliersStep(BaseStep):
     # ------------------------------------------------------------------
  
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["dataset"].copy()
+        df = context["traindataset"].copy()
  
         cache_index = self.image_cache.load_index().set_index("id")
         image_embs = self.image_cache.mmap()
@@ -91,7 +92,7 @@ class FilterPlaceOutliersStep(BaseStep):
             self._run_cpu(groups, image_embs, keep_mask)
  
         df = df.loc[keep_mask].reset_index(drop=True)
-        return {**context, "dataset": df}
+        return {**context, "traindataset": df}
  
     # ------------------------------------------------------------------
     # GPU path — batched across places

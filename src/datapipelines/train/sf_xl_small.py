@@ -4,10 +4,10 @@ from datapipelines import register_pipeline
 from datapipelines.base import Pipeline
 from datapipelines.env import raw_dir
 from datapipelines.steps import (
-    ReadImagesStep,
+    ReadTrainImagesStep,
     AssignPlaceIdStep,
     AssignSuperGroupStep,
-    FilterPlaceIdWithEmbedStep,
+    AssignPlaceIdWithEmbedStep,
     AssignSuperGroupWithEmbedStep,
     ComputeEmbeddingStep,
     SaveTrainDataset,
@@ -21,7 +21,7 @@ def build_test_pipeline() -> Pipeline:
     return Pipeline(
         PIPELINE_NAME,
         steps=[
-            ReadImagesStep(data_root=raw_dir() / "sf_xl/small"),
+            ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
             SaveTrainDataset(name=PIPELINE_NAME),
@@ -36,11 +36,11 @@ def build_test_pipeline() -> Pipeline:
     return Pipeline(
         PIPELINE_NAME,
         steps=[
-            ReadImagesStep(data_root=raw_dir() / "sf_xl/small"),
+            ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
             ComputeEmbeddingStep(name="sf_xl_small", batch_size=64, num_workers=8),
-            FilterPlaceIdWithEmbedStep(name="sf_xl_small", cos_sim_threshold=0.3, min_place_size=4),
+            AssignPlaceIdWithEmbedStep(name="sf_xl_small", cos_sim_threshold=0.3, min_place_size=4),
             SaveTrainDataset(name=PIPELINE_NAME),
             SummaryTrainDataset(name=PIPELINE_NAME), 
         ],
@@ -53,7 +53,7 @@ def build_test_pipeline() -> Pipeline:
     return Pipeline(
         PIPELINE_NAME,
         steps=[
-            ReadImagesStep(data_root=raw_dir() / "sf_xl/small"),
+            ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
             ComputeEmbeddingStep(name="sf_xl_small", batch_size=64, num_workers=8),
@@ -70,11 +70,11 @@ def build_test_pipeline() -> Pipeline:
     return Pipeline(
         PIPELINE_NAME,
         steps=[
-            ReadImagesStep(data_root=raw_dir() / "sf_xl/small"),
+            ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
             ComputeEmbeddingStep(name="sf_xl_small", batch_size=64, num_workers=8),
-            FilterPlaceIdWithEmbedStep(name="sf_xl_small", cos_sim_threshold=0.3, min_place_size=4),
+            AssignPlaceIdWithEmbedStep(name="sf_xl_small", cos_sim_threshold=0.3, min_place_size=4),
             AssignSuperGroupWithEmbedStep(name="sf_xl_small", total_supergroups=64, kmeans_max_iter=100, seed=42),
             SaveTrainDataset(name=PIPELINE_NAME),
             SummaryTrainDataset(name=PIPELINE_NAME), 
