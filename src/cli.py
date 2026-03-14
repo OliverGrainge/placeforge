@@ -19,44 +19,6 @@ def build_parser() -> argparse.ArgumentParser:
     train_parser.add_argument("config", type=Path, help="Path to a YAML config file")
     train_parser.set_defaults(handler=_handle_train)
 
-    eval_parser = subparsers.add_parser("eval", help="Evaluate a model")
-    eval_parser.set_defaults(handler=_handle_eval)
-
-    browse_parser = subparsers.add_parser(
-        "browse",
-        help="Interactively browse all images in each place of a train dataset",
-    )
-    browse_parser.add_argument("dataset", nargs="?", help="Train dataset name")
-    browse_parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List available train datasets and exit",
-    )
-    browse_parser.add_argument(
-        "--start",
-        type=int,
-        default=0,
-        metavar="INDEX",
-        help="Place index to start from (default: 0)",
-    )
-    browse_parser.add_argument(
-        "--sim",
-        action="store_true",
-        help="Show intraclass similarity histogram using DINOv2 embeddings (GUI mode only)",
-    )
-    browse_parser.add_argument(
-        "--web",
-        action="store_true",
-        help="Serve viewer over HTTP instead of opening a GUI window",
-    )
-    browse_parser.add_argument(
-        "--port",
-        type=int,
-        default=8765,
-        help="Port for --web mode (default: 8765)",
-    )
-    browse_parser.set_defaults(handler=_handle_browse)
-
     datapipeline_parser = subparsers.add_parser(
         "datapipeline",
         help="Run a registered data pipeline",
@@ -151,7 +113,7 @@ def _print_dataset_summary(datamodule: Any) -> None:
 
     num_places = len(train_ds)
     images_per_place = train_ds.images_per_place
-    num_supergroups = len(set(train_ds.valid_supergroup_ids))
+    num_supergroups = train_ds.num_supergroups
 
     print()
     print("=" * 52)
@@ -159,8 +121,8 @@ def _print_dataset_summary(datamodule: Any) -> None:
     print(f"    places:      {num_places:,}")
     print(f"    images/place:{images_per_place:>6}")
     print(f"    supergroups: {num_supergroups:,}")
-    print(f"    batch size:  {datamodule.batch_size:,}  "
-          f"({datamodule.places_per_batch} places × {images_per_place} images)")
+    print(f"    batch size:  {datamodule.batch_size * images_per_place:,}  "
+          f"({datamodule.batch_size} places × {images_per_place} images)")
 
     for name, ds in zip(val_names, val_datasets):
         print(f"  Val: {name}")
@@ -169,54 +131,6 @@ def _print_dataset_summary(datamodule: Any) -> None:
 
     print("=" * 52)
     print()
-
-
-def _list_train_datasets() -> list[str]:
-    from datapipelines.env import processed_dir
-
-    train_dir = processed_dir() / "train"
-    if not train_dir.is_dir():
-        return []
-    return sorted(
-        d.name for d in train_dir.iterdir()
-        if d.is_dir() and (d / "index.parquet").exists()
-    )
-
-
-
-def _handle_browse(args: argparse.Namespace) -> int:
-    if args.list:
-        names = _list_train_datasets()
-        print("train:")
-        for name in names:
-            print(f"  {name}")
-        if not names:
-            print("  <none>")
-        return 0
-
-    if args.dataset is None:
-        raise SystemExit("dataset is required unless --list is used")
-
-    from datamodules.datamodule import _resolve_train_index
-    from datamodules.datasets.train import PlaceImageTrainDataset
-    from debug import _browse_places, _browse_places_web
-
-    index_path = _resolve_train_index(args.dataset)
-    dataset = PlaceImageTrainDataset(
-        index_path,
-        images_per_place=1,
-        load_images=False,
-        seed=0,
-    )
-    if args.web:
-        _browse_places_web(dataset, start_index=args.start, port=args.port, show_sim=args.sim)
-    else:
-        _browse_places(dataset, start_index=args.start, show_sim=args.sim)
-    return 0
-
-
-def _handle_eval(args: argparse.Namespace) -> int:
-    raise NotImplementedError("`eval` is not implemented yet")
 
 
 def _handle_datapipeline(args: argparse.Namespace) -> int:

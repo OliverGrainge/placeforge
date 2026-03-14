@@ -6,9 +6,10 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import os 
 from PIL import Image
+from torch.utils.data import Dataset
 
 
-class VPRValidationDataset:
+class ValDataset(Dataset):
     def __init__(
         self,
         name: str,
@@ -22,36 +23,41 @@ class VPRValidationDataset:
         if not self.parquet_path.exists():
             raise FileNotFoundError(f"Validation dataset not found: {self.parquet_path}")
 
-        df = pd.read_parquet(self.parquet_path)
-
-        query_df = df[df["is_query"]].reset_index(drop=True)
-        database_df = df[~df["is_query"]].reset_index(drop=True)
-
-        self.database_records = self._build_database_records(database_df)
-        self.query_records = self._build_query_records(query_df, database_offset=len(self.database_records))
-        self.records = [*self.database_records, *self.query_records]
+        self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
+        self.df = pd.read_parquet(self.parquet_path).set_index("image_id")
 
     def __len__(self) -> int:
-        return len(self.records)
+        return len(self.df)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        record = dict(self.records[index])
-        resolved_path = Path(os.environ["PLACEFORGE_PROCESSED_DIR"]) / record["image_path"]
+        record = self.df.iloc[index]
+        resolved_path = self.raw_dir / record["image_path"]
         image = Image.open(resolved_path).convert("RGB")
         if self.transform is not None:
             image = self.transform(image)
-        return image
+        return {"image_id": index, "image": image}
 
     @property
     def num_queries(self) -> int:
-        return len(self.query_records)
+        return len(self.df[self.df["is_query"] == True])
 
     @property
     def num_database(self) -> int:
-        return len(self.database_records)
+        return len(self.df[self.df["is_query"] == False])
 
     def ground_truth(self) -> list[tuple[int, list[int]]]:
-        return self.query_df["matches"]
+        db_df = self.df[self.df["is_query"] == False]
+        id_to_db_pos = {img_id: pos for pos, img_id in enumerate(db_df.index)}
+
+        result = []
+        for qid, row in self.df[self.df["is_query"] == True].iterrows():
+            matches = row["matches"]
+            if matches is None or len(matches) == 0:
+                db_positions = []
+            else:
+                db_positions = [id_to_db_pos[m] for m in matches if m in id_to_db_pos]
+            result.append((qid, db_positions))
+        return result
     
 
 

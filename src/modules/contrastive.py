@@ -47,8 +47,8 @@ class ContrastiveLightningModule(pl.LightningModule):
         return self.model(images)
 
     def training_step(self, batch: dict[str, Any], _batch_idx: int) -> Tensor:
-        inputs: Tensor = batch["inputs"]
-        labels: Tensor = batch["labels"]
+        inputs: Tensor = batch["images"]
+        labels: Tensor = batch["place_ids"]
 
         embeddings = self(inputs)
         hard_pairs = self.miner(embeddings, labels)
@@ -71,11 +71,11 @@ class ContrastiveLightningModule(pl.LightningModule):
         self._val_store = {}
 
     def validation_step(self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0) -> None:
-        inputs: Tensor = batch["inputs"]
-        dataset_indices: Tensor = batch["dataset_indices"]
+        images: Tensor = batch["image"]
+        image_ids: Tensor = batch["image_id"]
 
         with torch.no_grad():
-            embeddings = self(inputs).cpu().float()
+            embeddings = self(images).cpu().float()
 
         if dataloader_idx not in self._val_store:
             # Pre-allocate the full embedding matrix on the first batch so that
@@ -86,7 +86,7 @@ class ContrastiveLightningModule(pl.LightningModule):
                 len(dataset), embed_dim, dtype=torch.float32
             )
 
-        self._val_store[dataloader_idx][dataset_indices] = embeddings
+        self._val_store[dataloader_idx][image_ids] = embeddings
 
     def on_validation_epoch_end(self) -> None:
         if not self._val_store:
@@ -99,11 +99,11 @@ class ContrastiveLightningModule(pl.LightningModule):
         for dl_idx in sorted(self._val_store.keys()):
             all_embs = self._val_store[dl_idx]
             dataset = val_datasets[dl_idx]
-            num_db = dataset.num_database
+            num_queries = dataset.num_queries
 
-            # Records are laid out as [database..., queries...] by dataset_index
-            db_embs = all_embs[:num_db].numpy()
-            q_embs = all_embs[num_db:].numpy()
+            # Records are laid out as [queries..., database...] by dataset index
+            q_embs = all_embs[:num_queries].numpy()
+            db_embs = all_embs[num_queries:].numpy()
 
             ground_truth = dataset.ground_truth()
             recalls = self._compute_recalls(q_embs, db_embs, ground_truth)

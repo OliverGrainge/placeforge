@@ -1,10 +1,7 @@
-from .train import PlaceImageTrainDataset, SupergroupBatchSampler, build_train_dataloader
-from .val import VPRValidationDataset, build_validation_dataloader
+from .train import TrainDataset
+from .val import ValDataset
 
 __all__ = [
-    "PlaceImageTrainDataset",
-    "SupergroupBatchSampler",
-    "build_train_dataloader",
-    "VPRValidationDataset",
-    "build_validation_dataloader",
+    "TrainDataset", 
+    "ValDataset"
 ]
