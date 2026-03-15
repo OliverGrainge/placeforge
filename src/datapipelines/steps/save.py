@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,12 @@ class SaveTrainDataset(BaseStep):
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         processed_dir = os.environ["PLACEFORGE_PROCESSED_DIR"]
-        output_path = Path(processed_dir) / "train"/ self.name / "traindataset.parquet"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_dir = Path(processed_dir) / "train" / self.name
+        output_path = output_dir / "traindataset.parquet"
+
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
 
         context["traindataset"].to_parquet(output_path)
 
@@ -31,8 +36,12 @@ class SaveValDataset(BaseStep):
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]: 
         processed_dir = os.environ["PLACEFORGE_PROCESSED_DIR"]
-        output_path = Path(processed_dir) / "val" / self.name / "valdataset.parquet" 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_dir = Path(processed_dir) / "val" / self.name
+        output_path = output_dir / "valdataset.parquet"
+
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
 
         context["valdataset"].to_parquet(output_path)
 

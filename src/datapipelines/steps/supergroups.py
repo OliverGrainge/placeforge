@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import random as pyrandom
 from pathlib import Path
 from typing import Any
 
@@ -13,17 +14,99 @@ from .util import EmbeddingCache
 
 
 class AssignSuperGroupStep(BaseStep):
-    def __init__(self, adjacency_cells: int = 1) -> None:
+    """Two-level supergroup assignment: spatial outer groups + random sub-assignment.
+
+    1. **Outer group** — spatial modular arithmetic on (cell_x, cell_y) so
+       no two places within ``adjacency_cells`` of each other share a group.
+    2. **Sub-group** — within each outer group, places are randomly assigned
+       to subclusters.  The number of subclusters per outer group is
+       allocated proportionally so the total hits ``total_supergroups``.
+
+    Parameters
+    ----------
+    adjacency_cells : int
+        Minimum cell distance between places in the same outer group.
+    total_supergroups : int
+        Desired total number of supergroups across the dataset.
+    seed : int | None
+        Random seed for reproducibility.
+    """
+
+    def __init__(
+        self,
+        adjacency_cells: int = 2,
+        total_supergroups: int = 64,
+        seed: int | None = 42,
+    ) -> None:
         super().__init__()
         self.adjacency_cells = adjacency_cells
+        self.total_supergroups = total_supergroups
+        self.seed = seed
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
         period = self.adjacency_cells + 1
 
-        df["supergroup_id"] = (df["cell_x"] % period) * period + (df["cell_y"] % period)
+        # --- 1. Outer group from spatial modular arithmetic -----------------
+        place_df = (
+            df[["place_id", "cell_x", "cell_y"]]
+            .drop_duplicates("place_id")
+            .reset_index(drop=True)
+        )
+        place_df["outer_group"] = (
+            (place_df["cell_x"] % period) * period + (place_df["cell_y"] % period)
+        )
+
+        # --- 2. Allocate subclusters proportionally -------------------------
+        outer_counts = place_df["outer_group"].value_counts()
+        allocation = self._allocate_clusters(outer_counts, len(place_df))
+
+        # --- 3. Random sub-assignment within each outer group ---------------
+        rng = pyrandom.Random(self.seed)
+        subgroup_col = np.zeros(len(place_df), dtype=np.int64)
+        sg_offset = 0
+
+        for og in place_df["outer_group"].unique():
+            mask = place_df["outer_group"].values == og
+            k = min(allocation[og], int(mask.sum()))
+            indices = np.where(mask)[0]
+            for idx in indices:
+                subgroup_col[idx] = sg_offset + rng.randrange(k)
+            sg_offset += k
+
+        place_df["supergroup_id"] = subgroup_col
+
+        # Map back to image-level dataframe
+        place_to_sg = place_df.set_index("place_id")["supergroup_id"]
+        df["supergroup_id"] = df["place_id"].map(place_to_sg).astype(np.int64)
 
         return {**context, "traindataset": df}
+
+    def _allocate_clusters(
+        self,
+        outer_counts: pd.Series,
+        total_places: int,
+    ) -> dict[int, int]:
+        """Distribute ``total_supergroups`` across outer groups proportionally,
+        guaranteeing every non-empty group gets at least 1.
+        Uses largest-remainder method so the sum is exactly total_supergroups.
+        """
+        n_outer = len(outer_counts)
+        target = max(self.total_supergroups, n_outer)
+
+        fracs = {og: (count / total_places) * target for og, count in outer_counts.items()}
+        alloc = {og: max(1, int(f)) for og, f in fracs.items()}
+
+        remaining = target - sum(alloc.values())
+        if remaining > 0:
+            remainders = {og: fracs[og] - alloc[og] for og in alloc}
+            for og in sorted(remainders, key=remainders.get, reverse=True):
+                if remaining <= 0:
+                    break
+                alloc[og] += 1
+                remaining -= 1
+
+        return alloc
 
 
 class AssignSuperGroupWithEmbedStep(BaseStep):
