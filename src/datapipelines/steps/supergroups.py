@@ -138,7 +138,7 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
 
     def __init__(
         self,
-        name: str,
+        embedding_name: str,
         total_supergroups: int = 64,
         kmeans_max_iter: int = 100,
         seed: int = 42,
@@ -147,7 +147,7 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         self.total_supergroups = total_supergroups
         self.kmeans_max_iter = kmeans_max_iter
         self.seed = seed
-        feature_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / name
+        feature_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / embedding_name
         self.place_cache = EmbeddingCache(feature_dir / "places")
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:

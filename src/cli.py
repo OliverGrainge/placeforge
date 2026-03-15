@@ -385,6 +385,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         sg_to_places.setdefault(ds.place_id_to_supergroup[pid], []).append(pid)
 
     per_sg: list[dict] = []
+    sg_pairwise_dists: dict[int, list] = {}
     skipped_single_sg = 0
 
     for sg_id, place_ids in tqdm(sg_to_places.items(), desc="Inter-class distances", unit="supergroup"):
@@ -397,6 +398,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
         vecs = vecs / np.where(norms == 0, 1.0, norms)
         pairwise_dist = 1.0 - (vecs @ vecs.T)[np.triu_indices(n, k=1)]
+        sg_pairwise_dists[int(sg_id)] = pairwise_dist.tolist()
         per_sg.append({
             "supergroup_id": int(sg_id), "n_places": int(n),
             "mean_cos_dist": float(pairwise_dist.mean()),
@@ -441,6 +443,27 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     fig.savefig(out_dir / "inter_distributions.png", dpi=120, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved inter distributions → {out_dir / 'inter_distributions.png'}")
+
+    n_sg = len(sg_pairwise_dists)
+    if n_sg <= 128:
+        sorted_sg = sorted(sg_pairwise_dists.keys())
+        fig3, ax3 = plt.subplots(figsize=(max(8, n_sg * 0.35), 5))
+        ax3.boxplot([sg_pairwise_dists[s] for s in sorted_sg], labels=[str(s) for s in sorted_sg],
+                    patch_artist=True,
+                    medianprops={"color": "black", "linewidth": 1.5},
+                    boxprops={"facecolor": "#C44E52", "alpha": 0.6},
+                    flierprops={"marker": ".", "markersize": 2, "alpha": 0.4},
+                    whiskerprops={"linewidth": 0.8}, capprops={"linewidth": 0.8})
+        ax3.set_title(f"Inter-class cosine distance by supergroup — {args.dataset_name}", fontsize=10)
+        ax3.set_xlabel("supergroup_id", fontsize=8)
+        ax3.set_ylabel("pairwise cosine distance", fontsize=8)
+        ax3.tick_params(axis="x", labelsize=6, rotation=90)
+        ax3.tick_params(axis="y", labelsize=7)
+        ax3.grid(axis="y", alpha=0.3)
+        fig3.tight_layout()
+        fig3.savefig(out_dir / "inter_by_supergroup.png", dpi=120, bbox_inches="tight")
+        plt.close(fig3)
+        print(f"  Saved inter supergroup plot → {out_dir / 'inter_by_supergroup.png'}")
 
     # Combined stats JSON
     with open(out_dir / "stats.json", "w") as f:

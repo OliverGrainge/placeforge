@@ -14,6 +14,8 @@ from datapipelines.steps import (
     SummaryTrainDataset,
 )
 
+EMBEDDING_NAME = "sf_xl_small"
+
 
 @register_pipeline("sf_xl_small")
 def build_test_pipeline() -> Pipeline:
@@ -39,8 +41,8 @@ def build_test_pipeline() -> Pipeline:
             ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
-            ComputeEmbeddingStep(name="sf_xl_small", batch_size=64, num_workers=8),
-            AssignPlaceIdWithEmbedStep(embedding_name="sf_xl_small", cos_sim_threshold=0.3, min_images=4),
+            ComputeEmbeddingStep(embedding_name=EMBEDDING_NAME, batch_size=64, num_workers=8),
+            AssignPlaceIdWithEmbedStep(embedding_name=EMBEDDING_NAME, cos_sim_threshold=0.3, min_images=4),
             SaveTrainDataset(name=PIPELINE_NAME),
             SummaryTrainDataset(name=PIPELINE_NAME), 
         ],
@@ -56,8 +58,8 @@ def build_test_pipeline() -> Pipeline:
             ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
-            ComputeEmbeddingStep(name="sf_xl_small", batch_size=64, num_workers=8),
-            AssignSuperGroupWithEmbedStep(name="sf_xl_small", total_supergroups=64, kmeans_max_iter=100, seed=42),
+            ComputeEmbeddingStep(embedding_name=EMBEDDING_NAME, batch_size=64, num_workers=8),
+            AssignSuperGroupWithEmbedStep(name=EMBEDDING_NAME, total_supergroups=64, kmeans_max_iter=100, seed=42),
             SaveTrainDataset(name=PIPELINE_NAME),
             SummaryTrainDataset(name=PIPELINE_NAME), 
         ],
@@ -73,9 +75,9 @@ def build_test_pipeline() -> Pipeline:
             ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
             AssignSuperGroupStep(),
-            ComputeEmbeddingStep(name="sf_xl_small", batch_size=64, num_workers=8),
-            AssignPlaceIdWithEmbedStep(embedding_name="sf_xl_small", cos_sim_threshold=0.3, min_images=4),
-            AssignSuperGroupWithEmbedStep(name="sf_xl_small", total_supergroups=64, kmeans_max_iter=100, seed=42),
+            ComputeEmbeddingStep(embedding_name=EMBEDDING_NAME, batch_size=64, num_workers=8),
+            AssignPlaceIdWithEmbedStep(embedding_name=EMBEDDING_NAME, cos_sim_threshold=0.3, min_images=4),
+            AssignSuperGroupWithEmbedStep(name=EMBEDDING_NAME, total_supergroups=64, kmeans_max_iter=100, seed=42),
             SaveTrainDataset(name=PIPELINE_NAME),
             SummaryTrainDataset(name=PIPELINE_NAME), 
         ],

@@ -50,17 +50,17 @@ class ComputeEmbeddingStep:
 
     def __init__(
         self,
-        name: str,
+        embedding_name: str,
         batch_size: int = 32,
         num_workers: int = 0,
         pbar=None,
     ) -> None:
-        self.name = name
+        self.embedding_name = embedding_name
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pbar = pbar
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
-        self.base_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / name
+        self.base_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / embedding_name
 
     @property
     def image_cache(self) -> EmbeddingCache:
