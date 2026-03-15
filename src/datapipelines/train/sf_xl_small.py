@@ -40,11 +40,11 @@ def build_test_pipeline() -> Pipeline:
         steps=[
             ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
-            AssignSuperGroupStep(),
             ComputeEmbeddingStep(embedding_name=EMBEDDING_NAME, batch_size=64, num_workers=8),
             AssignPlaceIdWithEmbedStep(embedding_name=EMBEDDING_NAME, cos_sim_threshold=0.3, min_images=4),
+            AssignSuperGroupStep(),
             SaveTrainDataset(name=PIPELINE_NAME),
-            SummaryTrainDataset(name=PIPELINE_NAME), 
+            SummaryTrainDataset(name=PIPELINE_NAME),
         ],
     )
 
@@ -57,11 +57,10 @@ def build_test_pipeline() -> Pipeline:
         steps=[
             ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
-            AssignSuperGroupStep(),
             ComputeEmbeddingStep(embedding_name=EMBEDDING_NAME, batch_size=64, num_workers=8),
-            AssignSuperGroupWithEmbedStep(name=EMBEDDING_NAME, total_supergroups=64, kmeans_max_iter=100, seed=42),
+            AssignSuperGroupWithEmbedStep(embedding_name=EMBEDDING_NAME, total_supergroups=64, kmeans_max_iter=100, seed=42, recompute_places=True),
             SaveTrainDataset(name=PIPELINE_NAME),
-            SummaryTrainDataset(name=PIPELINE_NAME), 
+            SummaryTrainDataset(name=PIPELINE_NAME),
         ],
     )
 
@@ -74,11 +73,10 @@ def build_test_pipeline() -> Pipeline:
         steps=[
             ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small"),
             AssignPlaceIdStep(cell_size_meters=10.0),
-            AssignSuperGroupStep(),
             ComputeEmbeddingStep(embedding_name=EMBEDDING_NAME, batch_size=64, num_workers=8),
             AssignPlaceIdWithEmbedStep(embedding_name=EMBEDDING_NAME, cos_sim_threshold=0.3, min_images=4),
-            AssignSuperGroupWithEmbedStep(name=EMBEDDING_NAME, total_supergroups=64, kmeans_max_iter=100, seed=42),
+            AssignSuperGroupWithEmbedStep(embedding_name=EMBEDDING_NAME, total_supergroups=64, kmeans_max_iter=100, seed=42),
             SaveTrainDataset(name=PIPELINE_NAME),
-            SummaryTrainDataset(name=PIPELINE_NAME), 
+            SummaryTrainDataset(name=PIPELINE_NAME),
         ],
     )

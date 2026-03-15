@@ -142,23 +142,23 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         total_supergroups: int = 64,
         kmeans_max_iter: int = 100,
         seed: int = 42,
+        recompute_places: bool = False,
     ) -> None:
         super().__init__()
         self.total_supergroups = total_supergroups
         self.kmeans_max_iter = kmeans_max_iter
         self.seed = seed
+        self.recompute_places = recompute_places
         feature_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / embedding_name
         self.place_cache = EmbeddingCache(feature_dir / "places")
+        if recompute_places:
+            self.image_cache = EmbeddingCache(feature_dir / "images")
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
         period = self.ADJACENCY_CELLS + 1  # 3
 
         # --- 1. Outer group from spatial modular arithmetic -----------------
-        # --- 2. Load place embeddings ---------------------------------------
-        cache_index = self.place_cache.load_index().set_index("id")
-        place_embs = self.place_cache.mmap()
-
         place_df = (
             df[["place_id", "cell_x", "cell_y"]]
             .drop_duplicates("place_id")
@@ -167,10 +167,23 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         place_df["outer_group"] = (
             (place_df["cell_x"] % period) * period + (place_df["cell_y"] % period)
         )
-
-        # Map place_id → row in the mmap (but don't read the embeddings yet)
         place_df = place_df.reset_index(drop=True)
-        place_df["emb_row"] = cache_index.loc[place_df["place_id"].values, "row"].values
+
+        # --- 2. Prepare embedding source ------------------------------------
+        if self.recompute_places:
+            # Build place_id → image cache rows using the filtered df.
+            # Only the index (small int arrays) is held in RAM; the mmap is
+            # accessed one outer group at a time in the loop below.
+            img_index = self.image_cache.load_index().set_index("id")
+            image_embs = self.image_cache.mmap()
+            place_to_img_rows: dict[int, np.ndarray] = {
+                pid: img_index.loc[sub["image_id"].values, "row"].values
+                for pid, sub in df.groupby("place_id")
+            }
+        else:
+            cache_index = self.place_cache.load_index().set_index("id")
+            place_embs = self.place_cache.mmap()
+            place_df["emb_row"] = cache_index.loc[place_df["place_id"].values, "row"].values
 
         # --- 3. Allocate subclusters proportionally -------------------------
         outer_counts = place_df["outer_group"].value_counts()
@@ -189,9 +202,18 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
 
         for og in unique_outer:
             mask = place_df["outer_group"].values == og
-            # Only pull this outer group's embeddings from the mmap into RAM
-            og_emb_rows = place_df.loc[mask, "emb_row"].values
-            og_embeddings = place_embs[og_emb_rows].astype(np.float32)
+
+            if self.recompute_places:
+                # Average surviving image embeddings per place — one outer
+                # group at a time, so peak RAM ≈ |og_places| × emb_dim.
+                og_place_ids = place_df.loc[mask, "place_id"].values
+                og_embeddings = np.stack([
+                    image_embs[place_to_img_rows[pid]].astype(np.float32).mean(axis=0)
+                    for pid in og_place_ids
+                ])
+            else:
+                og_emb_rows = place_df.loc[mask, "emb_row"].values
+                og_embeddings = place_embs[og_emb_rows].astype(np.float32)
 
             # L2-normalise for cosine-based clustering
             norms = np.linalg.norm(og_embeddings, axis=1, keepdims=True)
@@ -218,7 +240,8 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
                 self.pbar.update(1)
 
         place_df["supergroup_id"] = subcluster_col
-        place_df = place_df.drop(columns=["emb_row"])
+        if not self.recompute_places:
+            place_df = place_df.drop(columns=["emb_row"])
 
         # Map back to the image-level dataframe
         place_to_sg = place_df.set_index("place_id")["supergroup_id"]
