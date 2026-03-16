@@ -309,7 +309,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
             f"\n  Skipping variation analysis: embeddings not found at {image_cache.cache_dir}"
         )
         print(
-            f"  Run the datapipeline with ComputeEmbeddingStep, or pass --embedding-name.\n"
+            f"  Run the datapipeline with ComputeEmbeddingStep, or pass --image-embedding-name.\n"
         )
         return 0
 

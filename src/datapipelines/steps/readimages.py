@@ -8,7 +8,7 @@ import os
 from .base import BaseStep
 
 
-def _parse_utm(filename: str) -> tuple[float | None, float | None]:
+def _parse_filename(filename: str) -> tuple[float | None, float | None, float | None]:
     parts = filename.rsplit(".", 1)[0].split("@")
     values = parts[1:] if parts and parts[0] == "" else parts
 
@@ -20,6 +20,12 @@ def _parse_utm(filename: str) -> tuple[float | None, float | None]:
 
     utm_east = to_float(values[0]) if len(values) > 0 else None
     utm_north = to_float(values[1]) if len(values) > 1 else None
+    heading = to_float(values[8]) if len(values) > 8 else None
+    return utm_east, utm_north, heading
+
+
+def _parse_utm(filename: str) -> tuple[float | None, float | None]:
+    utm_east, utm_north, _ = _parse_filename(filename)
     return utm_east, utm_north
 
 
@@ -39,18 +45,18 @@ class ReadTrainImagesStep(BaseStep):
 
         records = []
         for image_id, image_path in enumerate(paths):
-            utm_east, utm_north = _parse_utm(image_path.name)
+            utm_east, utm_north, heading = _parse_filename(image_path.name)
             records.append(
                 {
                     "image_id": image_id,
                     "image_path": str(image_path.relative_to(self.raw_dir)),
                     "utm_east": utm_east,
                     "utm_north": utm_north,
+                    "heading": heading,
                 }
             )
             if self.pbar is not None:
                 self.pbar.update(1)
-
         return {**context, "traindataset": pd.DataFrame(records)}
 
     def _iter_image_paths(self):

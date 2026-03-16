@@ -254,3 +254,89 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
                 remaining -= 1
 
         return alloc
+
+
+
+class AssignCosPlaceSuperGroupStep(BaseStep):
+    """Assign supergroup IDs following the CosPlace grouping strategy.
+
+    Groups are formed by modular arithmetic on (cell_x, cell_y, cell_h),
+    producing N * N * L total supergroups. By construction, no two places
+    within the same group are spatially adjacent (they are at least
+    M * (N-1) metres apart or α * (L-1) degrees apart).
+
+    Assumes AssignCosPlacePlaceIdStep has already been run, so that
+    cell_x, cell_y and cell_h columns are present.
+
+    Parameters
+    ----------
+    N : int
+        Spatial modulus — controls minimum cell separation within a group.
+    L : int
+        Heading modulus — controls minimum heading separation within a group.
+    """
+
+    def __init__(self, N: int = 5, L: int = 2) -> None:
+        super().__init__()
+        self.N = N
+        self.L = L
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        df = context["traindataset"].copy()
+
+        u = df["cell_x"] % self.N
+        v = df["cell_y"] % self.N
+        w = df["cell_h"] % self.L
+
+        df["supergroup_id"] = u * (self.N * self.L) + v * self.L + w
+
+        return {**context, "traindataset": df}
+
+
+
+class AssignEigenPlacesSuperGroupStep(BaseStep):
+    """Assign supergroup IDs following the EigenPlaces partitioning strategy.
+ 
+    The paper partitions cells into non-overlapping subsets by taking
+    every N-th cell in both the x and y directions.  This guarantees
+    that no two cells within the same subset are spatial neighbours,
+    so they can safely be treated as independent classes within a
+    single training epoch.
+ 
+    The method produces N² supergroups via modular arithmetic on the
+    cell coordinates:
+ 
+        supergroup_id = (cell_x % N) * N + (cell_y % N)
+ 
+    At training time one would iterate over supergroups (shifting
+    after each epoch), using only the places inside each supergroup
+    for a classification batch.
+ 
+    Parameters
+    ----------
+    N : int
+        Spacing factor — only 1 / N² of all cells appear in a single
+        supergroup.  The paper uses N = 3 so that cells within the
+        same supergroup are at least 2 × cell_size apart, ensuring
+        no visual overlap.  This produces 9 supergroups.
+    """
+ 
+    def __init__(self, N: int = 3) -> None:
+        super().__init__()
+        self.N = N
+ 
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        df = context["traindataset"].copy()
+ 
+        if "cell_x" not in df.columns or "cell_y" not in df.columns:
+            raise KeyError(
+                "Columns 'cell_x' and 'cell_y' are required.  "
+                "Run AssignEigenPlacesPlaceIdStep first."
+            )
+ 
+        # Modular arithmetic — mirrors the paper's epoch-shifting partition
+        df["supergroup_id"] = (
+            (df["cell_x"] % self.N) * self.N + (df["cell_y"] % self.N)
+        )
+ 
+        return {**context, "traindataset": df}

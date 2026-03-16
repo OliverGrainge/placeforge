@@ -9,7 +9,7 @@ from .dinov2 import GeMPooling
 
 @register_model("resnet50_gem")
 class ResNet50GeMModel(nn.Module):
-    PRETRAINED = False
+    PRETRAINED = True
     GEM_P = 3.0
     EPS = 1e-6
 
