@@ -59,7 +59,7 @@ class AssignPlaceIdWithEmbedStep(BaseStep):
         self.cos_sim_threshold = cos_sim_threshold
         self.min_images = min_images
         self.image_cache = EmbeddingCache(
-            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / image_embedding_name
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / "embedding" / "image" / image_embedding_name
         )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:

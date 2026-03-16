@@ -35,9 +35,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Images per place to show (default: 4)",
     )
     analyse_parser.add_argument(
-        "--embedding-name",
+        "--image-embedding-name",
         default=None,
-        help="Feature-store embedding name for intra-class analysis (defaults to dataset_name)",
+        help="Feature-store name for image embeddings (defaults to dataset_name)",
+    )
+    analyse_parser.add_argument(
+        "--place-embedding-name",
+        default=None,
+        help="Feature-store name for place embeddings (defaults to dataset_name)",
     )
     analyse_parser.set_defaults(handler=_handle_analyse)
 
@@ -256,7 +261,8 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     print(f"  Saved sample figure → {batch_path}")
 
     # ── Shared helpers ────────────────────────────────────────────────────────
-    embedding_name = args.embedding_name or args.dataset_name
+    image_embedding_name = args.image_embedding_name or args.dataset_name
+    place_embedding_name = args.place_embedding_name or args.dataset_name
     feature_store_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
 
     def _summary(series: pd.Series) -> dict:
@@ -296,7 +302,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         ax.legend(fontsize=7)
         ax.tick_params(labelsize=7)
 
-    image_cache = EmbeddingCache(feature_store_dir / embedding_name / "images")
+    image_cache = EmbeddingCache(feature_store_dir / "embedding" / "image" / image_embedding_name)
 
     if not image_cache.exists:
         print(
@@ -353,7 +359,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     place_df = pd.DataFrame(per_place)
     intra_summary = {
         "dataset": args.dataset_name,
-        "embedding_name": embedding_name,
+        "image_embedding_name": image_embedding_name,
         "n_places_analysed": len(place_df),
         "n_places_skipped_single_image": skipped_single,
         "mean_cos_dist": _summary(place_df["mean_cos_dist"]),
@@ -462,7 +468,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     print()
     print("=" * 52)
     print(f"  Intra-class variation ({args.dataset_name})")
-    print(f"    places:  {len(place_df):,}   embedding: {embedding_name}")
+    print(f"    places:  {len(place_df):,}   embedding: {image_embedding_name}")
     print(f"    mean cos-dist:  mean={s['mean']:.4f}  std={s['std']:.4f}")
     print(f"                    max={s['max']:.4f}  median={s['median']:.4f}")
     print(f"                    p5={s['p5']:.4f}   p95={s['p95']:.4f}")
@@ -470,7 +476,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     print()
 
     # ── Inter-class variation ─────────────────────────────────────────────────
-    place_cache = EmbeddingCache(feature_store_dir / embedding_name / "places")
+    place_cache = EmbeddingCache(feature_store_dir / "embedding" / "place" / place_embedding_name)
 
     if not place_cache.npy_path.exists():
         print(
@@ -487,11 +493,11 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         return 0
 
     place_emb_mmap = place_cache.mmap()
-    n_place_embs = place_emb_mmap.shape[0]
+    place_index = place_cache.load_index().set_index("id")["row"]
 
     sg_to_places: dict = {}
     for pid in ds.place_ids:
-        if pid >= n_place_embs:
+        if pid not in place_index:
             continue
         sg_to_places.setdefault(ds.place_id_to_supergroup[pid], []).append(pid)
 
@@ -506,7 +512,8 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         if n < 2:
             skipped_single_sg += 1
             continue
-        vecs = place_emb_mmap[place_ids].astype(np.float32)
+        rows = place_index.loc[place_ids].values
+        vecs = place_emb_mmap[rows].astype(np.float32)
         norms = np.linalg.norm(vecs, axis=1, keepdims=True)
         vecs = vecs / np.where(norms == 0, 1.0, norms)
         pairwise_dist = 1.0 - (vecs @ vecs.T)[np.triu_indices(n, k=1)]
@@ -528,7 +535,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     sg_df = pd.DataFrame(per_sg)
     inter_summary = {
         "dataset": args.dataset_name,
-        "embedding_name": embedding_name,
+        "place_embedding_name": place_embedding_name,
         "n_supergroups_analysed": len(sg_df),
         "n_supergroups_skipped_single_place": skipped_single_sg,
         "mean_cos_dist": _summary(sg_df["mean_cos_dist"]),
@@ -642,7 +649,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     print()
     print("=" * 52)
     print(f"  Inter-class variation ({args.dataset_name})")
-    print(f"    supergroups: {len(sg_df):,}   embedding: {embedding_name}")
+    print(f"    supergroups: {len(sg_df):,}   embedding: {place_embedding_name}")
     print(f"    mean cos-dist:  mean={si['mean']:.4f}  std={si['std']:.4f}")
     print(f"                    max={si['max']:.4f}  median={si['median']:.4f}")
     print(f"                    p5={si['p5']:.4f}   p95={si['p95']:.4f}")

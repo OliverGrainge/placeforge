@@ -150,7 +150,7 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         self.kmeans_max_iter = kmeans_max_iter
         self.seed = seed
         self.place_cache = EmbeddingCache(
-            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / place_embedding_name
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / "embedding" / "place" / place_embedding_name
         )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
