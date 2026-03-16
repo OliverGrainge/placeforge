@@ -9,7 +9,9 @@ import cli
 
 
 class CliDatapipelineTests(unittest.TestCase):
-    def test_datapipeline_handler_runs_pipeline_with_empty_context_by_default(self) -> None:
+    def test_datapipeline_handler_runs_pipeline_with_empty_context_by_default(
+        self,
+    ) -> None:
         args = argparse.Namespace(
             name="sf_xl_small",
             context=None,
@@ -32,13 +34,16 @@ class CliDatapipelineTests(unittest.TestCase):
         )
 
         stdout = io.StringIO()
-        with patch("cli.list_pipelines", return_value=("alpha", "beta")), patch(
-            "sys.stdout", stdout
+        with (
+            patch("cli.list_pipelines", return_value=("alpha", "beta")),
+            patch("sys.stdout", stdout),
         ):
             exit_code = cli._handle_datapipeline(args)
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(stdout.getvalue(), "Available datapipelines:\n- alpha\n- beta\n")
+        self.assertEqual(
+            stdout.getvalue(), "Available datapipelines:\n- alpha\n- beta\n"
+        )
 
     def test_datapipeline_requires_name_when_not_listing(self) -> None:
         args = argparse.Namespace(

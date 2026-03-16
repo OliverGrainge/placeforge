@@ -29,12 +29,12 @@ class SaveTrainDataset(BaseStep):
         return context
 
 
-class SaveValDataset(BaseStep): 
-    def __init__(self, name: str) -> None: 
-        super().__init__() 
-        self.name = name 
+class SaveValDataset(BaseStep):
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.name = name
 
-    def run(self, context: dict[str, Any]) -> dict[str, Any]: 
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
         processed_dir = os.environ["PLACEFORGE_PROCESSED_DIR"]
         output_dir = Path(processed_dir) / "val" / self.name
         output_path = output_dir / "valdataset.parquet"
@@ -46,4 +46,3 @@ class SaveValDataset(BaseStep):
         context["valdataset"].to_parquet(output_path)
 
         return context
-

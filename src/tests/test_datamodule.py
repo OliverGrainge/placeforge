@@ -13,14 +13,18 @@ from PIL import Image
 from datamodules.datamodule import PlaceRecognitionTrainDataModule
 
 
-def _make_train_index(directory: Path, *, num_images_per_place: int = 4, num_places: int = 2) -> None:
+def _make_train_index(
+    directory: Path, *, num_images_per_place: int = 4, num_places: int = 2
+) -> None:
     """Write a minimal index.parquet under directory/."""
     rows = []
     for place_idx in range(num_places):
         for img_idx in range(num_images_per_place):
             image_id = f"place{place_idx}_img{img_idx}"
             image_path = directory / f"{image_id}.jpg"
-            Image.new("RGB", (4, 4), color=(place_idx * 60, img_idx * 40, 0)).save(image_path)
+            Image.new("RGB", (4, 4), color=(place_idx * 60, img_idx * 40, 0)).save(
+                image_path
+            )
             rows.append(
                 {
                     "image_id": image_id,
@@ -41,9 +45,9 @@ def _make_val_dataset(directory: Path) -> None:
     Image.new("RGB", (4, 4), color=(0, 255, 0)).save(db0_img)
     Image.new("RGB", (4, 4), color=(0, 0, 255)).save(db1_img)
 
-    pd.DataFrame([{"qid": 0, "path": str(q_img), "lat": 37.77, "lon": -122.41}]).to_parquet(
-        directory / "queries.parquet"
-    )
+    pd.DataFrame(
+        [{"qid": 0, "path": str(q_img), "lat": 37.77, "lon": -122.41}]
+    ).to_parquet(directory / "queries.parquet")
     pd.DataFrame(
         [
             {"dbid": 0, "path": str(db0_img), "lat": 37.77, "lon": -122.41},

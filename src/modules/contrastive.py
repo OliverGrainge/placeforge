@@ -70,7 +70,9 @@ class ContrastiveLightningModule(pl.LightningModule):
     def on_validation_epoch_start(self) -> None:
         self._val_store = {}
 
-    def validation_step(self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0) -> None:
+    def validation_step(
+        self, batch: dict[str, Any], batch_idx: int, dataloader_idx: int = 0
+    ) -> None:
         images: Tensor = batch["image"]
         image_ids: Tensor = batch["image_id"]
 

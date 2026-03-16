@@ -13,7 +13,9 @@ from datapipelines.steps.extractembeddings import ExtractEmbeddingsStep
 
 
 class ExtractEmbeddingsStepTests(unittest.TestCase):
-    def test_uses_context_override_for_cache_dir_and_exposes_manifest_path(self) -> None:
+    def test_uses_context_override_for_cache_dir_and_exposes_manifest_path(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             cache_dir = Path(tmp_dir) / "custom_cache"
             dataframe = pd.DataFrame(
@@ -28,14 +30,19 @@ class ExtractEmbeddingsStepTests(unittest.TestCase):
                 cache_dir_context_key="embedding_cache_dir",
             )
 
-            with patch.object(step, "_resolve_device", return_value="cpu"), patch.object(
-                step, "_load_model", return_value=object()
-            ), patch.object(step, "_build_transform", return_value=object()), patch.object(
-                step,
-                "_embed_batch",
-                return_value=np.ones((2, step.embed_dim), dtype=np.float32),
+            with (
+                patch.object(step, "_resolve_device", return_value="cpu"),
+                patch.object(step, "_load_model", return_value=object()),
+                patch.object(step, "_build_transform", return_value=object()),
+                patch.object(
+                    step,
+                    "_embed_batch",
+                    return_value=np.ones((2, step.embed_dim), dtype=np.float32),
+                ),
             ):
-                result = step.run({"index": dataframe, "embedding_cache_dir": cache_dir})
+                result = step.run(
+                    {"index": dataframe, "embedding_cache_dir": cache_dir}
+                )
 
             self.assertEqual(result["embedding_cache_dir"], cache_dir)
             self.assertEqual(
@@ -60,28 +67,41 @@ class ExtractEmbeddingsStepTests(unittest.TestCase):
             first_batch = np.full((2, step.embed_dim), 1.0, dtype=np.float32)
             second_batch = np.full((2, step.embed_dim), 2.0, dtype=np.float32)
 
-            with patch.object(step, "_resolve_device", return_value="cpu"), patch.object(
-                step, "_load_model", return_value=object()
-            ), patch.object(step, "_build_transform", return_value=object()), patch.object(
-                step,
-                "_embed_batch",
-                side_effect=[first_batch, RuntimeError("stop after first checkpoint")],
+            with (
+                patch.object(step, "_resolve_device", return_value="cpu"),
+                patch.object(step, "_load_model", return_value=object()),
+                patch.object(step, "_build_transform", return_value=object()),
+                patch.object(
+                    step,
+                    "_embed_batch",
+                    side_effect=[
+                        first_batch,
+                        RuntimeError("stop after first checkpoint"),
+                    ],
+                ),
             ):
-                with self.assertRaisesRegex(RuntimeError, "stop after first checkpoint"):
+                with self.assertRaisesRegex(
+                    RuntimeError, "stop after first checkpoint"
+                ):
                     step.run({"index": dataframe})
 
             manifest_after_failure = pd.read_parquet(cache_dir / "manifest.parquet")
-            self.assertEqual(manifest_after_failure["image_id"].tolist(), ["img_1", "img_2"])
+            self.assertEqual(
+                manifest_after_failure["image_id"].tolist(), ["img_1", "img_2"]
+            )
             self.assertTrue((cache_dir / "batches" / "batch_000000.npy").exists())
 
             resumed_step = ExtractEmbeddingsStep(cache_dir=cache_dir, batch_size=2)
-            with patch.object(resumed_step, "_resolve_device", return_value="cpu"), patch.object(
-                resumed_step, "_load_model", return_value=object()
-            ), patch.object(resumed_step, "_build_transform", return_value=object()), patch.object(
-                resumed_step,
-                "_embed_batch",
-                return_value=second_batch,
-            ) as embed_batch_mock:
+            with (
+                patch.object(resumed_step, "_resolve_device", return_value="cpu"),
+                patch.object(resumed_step, "_load_model", return_value=object()),
+                patch.object(resumed_step, "_build_transform", return_value=object()),
+                patch.object(
+                    resumed_step,
+                    "_embed_batch",
+                    return_value=second_batch,
+                ) as embed_batch_mock,
+            ):
                 resumed_step.run({"index": dataframe})
 
             embed_batch_mock.assert_called_once()
@@ -118,13 +138,19 @@ class ExtractEmbeddingsStepTests(unittest.TestCase):
             step = ExtractEmbeddingsStep(cache_dir=cache_dir, batch_size=2)
             progress = MagicMock()
 
-            with patch.object(step, "_resolve_device", return_value="cpu"), patch.object(
-                step, "_load_model", return_value=object()
-            ), patch.object(step, "_build_transform", return_value=object()), patch.object(
-                step,
-                "_embed_batch",
-                return_value=np.ones((2, step.embed_dim), dtype=np.float32),
-            ), patch.object(step, "progress", return_value=nullcontext(progress)) as progress_mock:
+            with (
+                patch.object(step, "_resolve_device", return_value="cpu"),
+                patch.object(step, "_load_model", return_value=object()),
+                patch.object(step, "_build_transform", return_value=object()),
+                patch.object(
+                    step,
+                    "_embed_batch",
+                    return_value=np.ones((2, step.embed_dim), dtype=np.float32),
+                ),
+                patch.object(
+                    step, "progress", return_value=nullcontext(progress)
+                ) as progress_mock,
+            ):
                 step.run({"index": dataframe})
 
             progress_mock.assert_called_once_with(

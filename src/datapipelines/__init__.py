@@ -1,30 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Literal
 
 from .base import Pipeline
 
 PipelineFactory = Callable[[], Pipeline]
+PipelineCategory = Literal["train", "val"]
 
 # Maps pipeline_name -> (factory, category)
-_PIPELINE_REGISTRY: dict[str, tuple[PipelineFactory, str | None]] = {}
+_PIPELINE_REGISTRY: dict[str, tuple[PipelineFactory, PipelineCategory | None]] = {}
 
 
-def register_pipeline(name: str = "") -> Callable[[PipelineFactory], PipelineFactory]:
+def register_pipeline(
+    name: str = "",
+    *,
+    category: PipelineCategory | None = None,
+) -> Callable[[PipelineFactory], PipelineFactory]:
     def decorator(factory: PipelineFactory) -> PipelineFactory:
         pipeline_name = name or factory.__name__
 
         if pipeline_name in _PIPELINE_REGISTRY:
             raise ValueError(f"Pipeline {pipeline_name!r} is already registered")
-
-        # Infer category from the subpackage the factory lives in.
-        # datapipelines.train.* -> "train", datapipelines.val.* -> "val"
-        module_parts = (getattr(factory, "__module__", "") or "").split(".")
-        category: str | None = None
-        for part in ("train", "val"):
-            if part in module_parts:
-                category = part
-                break
 
         _PIPELINE_REGISTRY[pipeline_name] = (factory, category)
         return factory
@@ -44,7 +41,7 @@ def get_pipeline(name: str) -> Pipeline:
     return factory()
 
 
-def list_pipelines(category: str | None = None) -> tuple[str, ...]:
+def list_pipelines(category: PipelineCategory | None = None) -> tuple[str, ...]:
     """Return registered pipeline names, optionally filtered by category."""
     return tuple(
         sorted(
@@ -55,11 +52,11 @@ def list_pipelines(category: str | None = None) -> tuple[str, ...]:
     )
 
 
-# Import pipeline packages to trigger registration side-effects.
-# Train pipelines live in datapipelines/train/, val in datapipelines/val/.
-from . import train  # noqa: E402, F401
+# Import pipeline modules to trigger registration side-effects.
+from . import sf_xl_small  # noqa: E402, F401
+
 try:
-    from . import val  # noqa: E402, F401
+    from . import pitts30k  # noqa: E402, F401
 except ImportError:
     pass  # val pipelines require extra steps (splitids, geomatches, etc.)
 

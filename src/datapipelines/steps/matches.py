@@ -30,7 +30,9 @@ class ComputeValMatchesStep(BaseStep):
             df.at[i, "matches"] = image_ids[db_neighbors]
 
         # Drop query rows with no database matches
-        no_match_mask = query_mask & df["matches"].apply(lambda m: m is not None and len(m) == 0)
+        no_match_mask = query_mask & df["matches"].apply(
+            lambda m: m is not None and len(m) == 0
+        )
         df = df[~no_match_mask].reset_index(drop=True)
 
         return {**context, "valdataset": df}

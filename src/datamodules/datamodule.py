@@ -65,7 +65,7 @@ class DataModule(pl.LightningDataModule):
                 ds,
                 batch_size=self.batch_size,
                 shuffle=False,
-                num_workers=self.num_workers//2,
+                num_workers=self.num_workers // 2,
                 pin_memory=True,
                 persistent_workers=self.num_workers > 0,
             )

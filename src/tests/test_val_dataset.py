@@ -39,12 +39,16 @@ class VPRValidationDatasetTests(unittest.TestCase):
                     {"dbid": 1, "path": "database/db1.jpg", "lat": 5.0, "lon": 6.0},
                 ]
             ).to_parquet(dataset_dir / "database.parquet")
-            pd.DataFrame([{"qid": 0, "dbid": 1}]).to_parquet(dataset_dir / "matches.parquet")
+            pd.DataFrame([{"qid": 0, "dbid": 1}]).to_parquet(
+                dataset_dir / "matches.parquet"
+            )
             (dataset_dir / "metadata.json").write_text(
                 json.dumps({"dataset_name": "pitts30k", "version": "1.0"}) + "\n"
             )
 
-            dataset = VPRValidationDataset(dataset_dir, image_root=image_root, load_images=False)
+            dataset = VPRValidationDataset(
+                dataset_dir, image_root=image_root, load_images=False
+            )
 
             self.assertEqual(dataset.num_database, 2)
             self.assertEqual(dataset.num_queries, 1)
@@ -86,7 +90,9 @@ class VPRValidationDatasetTests(unittest.TestCase):
             pd.DataFrame([{"qid": 0, "dbid": 0}, {"qid": 0, "dbid": 1}]).to_parquet(
                 dataset_dir / "matches.parquet"
             )
-            (dataset_dir / "metadata.json").write_text(json.dumps({"dataset_name": "test"}) + "\n")
+            (dataset_dir / "metadata.json").write_text(
+                json.dumps({"dataset_name": "test"}) + "\n"
+            )
 
             dataloader = build_validation_dataloader(
                 dataset_dir,
@@ -104,7 +110,9 @@ class VPRValidationDatasetTests(unittest.TestCase):
             root = Path(tmp_dir)
             raw_root = root / "raw"
             dataset_dir = root / "processed" / "val" / "pitts30k"
-            image_path = raw_root / "pitts30k" / "images" / "val" / "database" / "db0.jpg"
+            image_path = (
+                raw_root / "pitts30k" / "images" / "val" / "database" / "db0.jpg"
+            )
             image_path.parent.mkdir(parents=True)
             Image.new("RGB", (3, 3), color=(0, 255, 0)).save(image_path)
 
@@ -122,10 +130,16 @@ class VPRValidationDatasetTests(unittest.TestCase):
                     }
                 ]
             ).to_parquet(dataset_dir / "database.parquet")
-            pd.DataFrame([], columns=["qid", "dbid"]).to_parquet(dataset_dir / "matches.parquet")
-            (dataset_dir / "metadata.json").write_text(json.dumps({"dataset_name": "pitts30k"}) + "\n")
+            pd.DataFrame([], columns=["qid", "dbid"]).to_parquet(
+                dataset_dir / "matches.parquet"
+            )
+            (dataset_dir / "metadata.json").write_text(
+                json.dumps({"dataset_name": "pitts30k"}) + "\n"
+            )
 
-            with mock.patch.dict(os.environ, {"PLACEFORGE_RAW_DIR": str(raw_root)}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"PLACEFORGE_RAW_DIR": str(raw_root)}, clear=False
+            ):
                 dataset = VPRValidationDataset(dataset_dir, load_images=False)
 
             self.assertEqual(dataset[0]["image_path"], str(image_path))
@@ -146,17 +160,37 @@ class VPRValidationDatasetTests(unittest.TestCase):
 
             pd.DataFrame(
                 [
-                    {"image_id": "a1", "image_path": str(root / "a1.jpg"), "place_id": "place_a", "supergroup_id": 0},
-                    {"image_id": "a2", "image_path": str(root / "a2.jpg"), "place_id": "place_a", "supergroup_id": 0},
+                    {
+                        "image_id": "a1",
+                        "image_path": str(root / "a1.jpg"),
+                        "place_id": "place_a",
+                        "supergroup_id": 0,
+                    },
+                    {
+                        "image_id": "a2",
+                        "image_path": str(root / "a2.jpg"),
+                        "place_id": "place_a",
+                        "supergroup_id": 0,
+                    },
                 ]
             ).to_parquet(train_dir / "index.parquet")
 
-            pd.DataFrame([{"qid": 0, "path": str(q_img), "lat": 1.0, "lon": 2.0}]).to_parquet(val_dir / "queries.parquet")
-            pd.DataFrame([{"dbid": 0, "path": str(db_img), "lat": 3.0, "lon": 4.0}]).to_parquet(val_dir / "database.parquet")
-            pd.DataFrame([{"qid": 0, "dbid": 0}]).to_parquet(val_dir / "matches.parquet")
-            (val_dir / "metadata.json").write_text(json.dumps({"dataset_name": "test"}) + "\n")
+            pd.DataFrame(
+                [{"qid": 0, "path": str(q_img), "lat": 1.0, "lon": 2.0}]
+            ).to_parquet(val_dir / "queries.parquet")
+            pd.DataFrame(
+                [{"dbid": 0, "path": str(db_img), "lat": 3.0, "lon": 4.0}]
+            ).to_parquet(val_dir / "database.parquet")
+            pd.DataFrame([{"qid": 0, "dbid": 0}]).to_parquet(
+                val_dir / "matches.parquet"
+            )
+            (val_dir / "metadata.json").write_text(
+                json.dumps({"dataset_name": "test"}) + "\n"
+            )
 
-            with mock.patch.dict(os.environ, {"PLACEFORGE_PROCESSED_DIR": str(processed)}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"PLACEFORGE_PROCESSED_DIR": str(processed)}, clear=False
+            ):
                 datamodule = PlaceRecognitionTrainDataModule(
                     "my_dataset",
                     places_per_batch=1,

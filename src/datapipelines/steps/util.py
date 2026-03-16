@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 
 
-
 class EmbeddingCache:
     """
     Memory-mapped embedding store backed by a single .npy file + a parquet index.

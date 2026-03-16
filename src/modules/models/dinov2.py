@@ -9,7 +9,6 @@ import warnings
 warnings.filterwarnings("ignore", message=".*xFormers is not available.*")
 
 
-
 class GeMPooling(nn.Module):
     def __init__(self, p: float = 3.0, eps: float = 1e-6) -> None:
         super().__init__()

@@ -12,7 +12,9 @@ _TRANSFORM_REGISTRY: dict[str, TransformType[Any]] = {}
 def register_transform(
     name: str = "",
 ) -> Callable[[TransformType[TransformT]], TransformType[TransformT]]:
-    def decorator(transform_cls: TransformType[TransformT]) -> TransformType[TransformT]:
+    def decorator(
+        transform_cls: TransformType[TransformT],
+    ) -> TransformType[TransformT]:
         transform_name = name or transform_cls.__name__
 
         if transform_name in _TRANSFORM_REGISTRY:

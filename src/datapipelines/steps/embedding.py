@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from contextlib import redirect_stdout, redirect_stderr
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,7 @@ import torch.utils.data
 import torchvision.transforms as T
 from PIL import Image
 
+from .base import BaseStep
 from .util import EmbeddingCache
 
 
@@ -29,89 +30,65 @@ class _ImageDataset(torch.utils.data.Dataset):
         return self.transform(img), idx  # return idx for ordering guarantee
 
 
-
-class ComputeEmbeddingStep:
+class ComputeImageEmbeddingStep(BaseStep):
     """
-    Computes image embeddings and aggregated place embeddings, caching both
-    as memory-mapped numpy files for efficiency.
+    Runs the model on all images in traindataset and writes embeddings to a
+    memory-mapped array indexed directly by image_id:
 
-    Cache structure under <feature_store>/<name>/:
-        images/embeddings.npy   — one row per image
-        images/index.parquet    — image_id → row
-        places/embeddings.npy   — one row per place (mean of its image embeddings)
-        places/index.parquet    — place_id → row
+        embeddings[image_id] → embedding vector
+
+    Saved to <feature_store>/<image_embedding_name>/images.npy
     """
 
-    TRANSFORM = T.Compose([
-        T.Resize((322, 322)),
-        T.ToTensor(),
-        T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
+    TRANSFORM = T.Compose(
+        [
+            T.Resize((322, 322)),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
 
     def __init__(
         self,
-        embedding_name: str,
+        image_embedding_name: str,
         batch_size: int = 32,
         num_workers: int = 0,
-        pbar=None,
     ) -> None:
-        self.embedding_name = embedding_name
+        super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.pbar = pbar
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
-        self.base_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / embedding_name
-
-    @property
-    def image_cache(self) -> EmbeddingCache:
-        return EmbeddingCache(self.base_dir / "images")
-
-    @property
-    def place_cache(self) -> EmbeddingCache:
-        return EmbeddingCache(self.base_dir / "places")
-
-    # ---- public API ----------------------------------------------------------
+        self.cache_path = (
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
+            / image_embedding_name
+            / "images.npy"
+        )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["traindataset"].sort_values("place_id").reset_index(drop=True)
-
-        if not self.image_cache.exists:
+        if not self.cache_path.exists():
             model = self._load_model()
-            self._compute_image_embeddings(df, model)
+            self._run_model(context["traindataset"], model)
             del model
             torch.cuda.empty_cache()
-
-        if not self.place_cache.exists:
-            self._compute_place_embeddings(df)
-
         return context
 
-    # ---- internals -----------------------------------------------------------
+    def _run_model(self, df: pd.DataFrame, model) -> None:
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    @staticmethod
-    def _load_model():
-        with open(os.devnull, "w") as devnull:
-            with redirect_stdout(devnull), redirect_stderr(devnull):
-                model = torch.hub.load("serizba/salad", "dinov2_salad")
-        model.eval().cuda()
-        return model
-
-    def _compute_image_embeddings(self, df: pd.DataFrame, model) -> None:
-        """
-        Stream image embeddings straight to a pre-allocated memory-mapped file.
-        Peak RAM usage ≈ one batch of embeddings, not the full dataset.
-        """
-        cache = self.image_cache
-        cache.cache_dir.mkdir(parents=True, exist_ok=True)
-
-        n_images = len(df)
-        image_paths = df["image_path"].tolist()
         image_ids = df["image_id"].tolist()
+        emb_dim = self._probe_embedding_dim(model)
+
+        mmap = np.lib.format.open_memmap(
+            self.cache_path,
+            mode="w+",
+            dtype=np.float32,
+            shape=(max(image_ids) + 1, emb_dim),
+        )
 
         if self.pbar is not None:
-            self.pbar.reset(total=n_images)
+            self.pbar.reset(total=len(df))
 
-        dataset = _ImageDataset(image_paths, self.raw_dir, self.TRANSFORM)
+        dataset = _ImageDataset(df["image_path"].tolist(), self.raw_dir, self.TRANSFORM)
         loader = torch.utils.data.DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -120,64 +97,90 @@ class ComputeEmbeddingStep:
             pin_memory=True,
         )
 
-        # We need the embedding dim from a single forward pass to pre-allocate.
-        emb_dim = self._probe_embedding_dim(model)
-
-        # Pre-allocate a memory-mapped file on disk — no RAM pressure.
-        mmap = np.lib.format.open_memmap(
-            cache.npy_path, mode="w+", dtype=np.float32, shape=(n_images, emb_dim),
-        )
-
         for images, indices in loader:
-            indices = indices.tolist()
+            batch_ids = [image_ids[i] for i in indices.tolist()]
             with torch.no_grad():
                 embs = model(images.cuda()).cpu().numpy()
-            mmap[indices] = embs  # write directly to disk via mmap
-
+            mmap[batch_ids] = embs
             if self.pbar is not None:
-                self.pbar.update(len(indices))
+                self.pbar.update(len(batch_ids))
 
         mmap.flush()
         del mmap
 
-        # Write index
-        pd.DataFrame({"id": image_ids, "row": range(n_images)}).to_parquet(
-            cache.index_path, index=False,
-        )
+    @staticmethod
+    def _load_model():
+        with open(os.devnull, "w") as devnull:
+            with redirect_stdout(devnull), redirect_stderr(devnull):
+                model = torch.hub.load("serizba/salad", "dinov2_salad")
+        return model.eval().cuda()
 
-    def _compute_place_embeddings(self, df: pd.DataFrame) -> None:
-        """
-        Aggregate image embeddings per place by streaming through the
-        memory-mapped image file — constant RAM regardless of dataset size.
-        """
-        cache = self.place_cache
-        cache.cache_dir.mkdir(parents=True, exist_ok=True)
+    def _probe_embedding_dim(self, model) -> int:
+        dummy = torch.randn(1, 3, 322, 322, device="cuda")
+        with torch.no_grad():
+            return model(dummy).shape[1]
 
-        image_embs = self.image_cache.mmap()  # memory-mapped, ~0 RAM
 
-        # Group row indices by place_id (the df is already sorted by place_id)
-        grouped = df.groupby("place_id", sort=True).indices  # {place_id: array of row indices}
-        place_ids = sorted(grouped.keys())
-        n_places = len(place_ids)
+class AggregatePlaceEmbeddingStep(BaseStep):
+    """
+    Aggregates image embeddings into place embeddings.
+
+    Reads image embeddings from <feature_store>/<image_embedding_name>/images.npy
+    (indexed by image_id), groups by place_id from traindataset, reduces
+    with `reduction`, optionally L2-normalizes, and writes results to an
+    EmbeddingCache at <feature_store>/<place_embedding_name>/.
+    """
+
+    def __init__(
+        self,
+        image_embedding_name: str,
+        place_embedding_name: str,
+        reduction: Literal["mean"] = "mean",
+        normalize: bool = False,
+    ) -> None:
+        super().__init__()
+        feature_store = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
+        self.image_cache_path = feature_store / image_embedding_name / "images.npy"
+        self.place_cache = EmbeddingCache(feature_store / place_embedding_name)
+        self.reduction = reduction
+        self.normalize = normalize
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        if self.place_cache.npy_path.exists():
+            return context
+
+        df = context["traindataset"]
+        image_embs = np.load(self.image_cache_path, mmap_mode="r")
+
+        grouped = list(df.groupby("place_id", sort=True))
+        n_places = len(grouped)
         emb_dim = image_embs.shape[1]
 
+        self.place_cache.cache_dir.mkdir(parents=True, exist_ok=True)
         mmap = np.lib.format.open_memmap(
-            cache.npy_path, mode="w+", dtype=np.float32, shape=(n_places, emb_dim),
+            self.place_cache.npy_path,
+            mode="w+",
+            dtype=np.float32,
+            shape=(n_places, emb_dim),
         )
 
         if self.pbar is not None:
             self.pbar.reset(total=n_places)
 
-        for place_row, place_id in enumerate(place_ids):
-            rows = grouped[place_id]
-            # For places with many images, compute the mean in chunks to avoid
-            # pulling a huge slice into RAM at once.
-            place_sum = np.zeros(emb_dim, dtype=np.float64)
-            chunk_size = 512
-            for start in range(0, len(rows), chunk_size):
-                chunk_rows = rows[start : start + chunk_size]
-                place_sum += image_embs[chunk_rows].astype(np.float64).sum(axis=0)
-            mmap[place_row] = (place_sum / len(rows)).astype(np.float32)
+        for place_id, (_, sub) in enumerate(grouped):
+            embs = image_embs[sub["image_id"].values].astype(np.float32)
+
+            if self.reduction == "mean":
+                agg = embs.mean(axis=0)
+            else:
+                raise ValueError(f"Unknown reduction: {self.reduction!r}")
+
+            if self.normalize:
+                norm = np.linalg.norm(agg)
+                if norm > 0:
+                    agg = agg / norm
+
+            mmap[place_id] = agg
 
             if self.pbar is not None:
                 self.pbar.update(1)
@@ -185,12 +188,4 @@ class ComputeEmbeddingStep:
         mmap.flush()
         del mmap
 
-        pd.DataFrame({"id": place_ids, "row": range(n_places)}).to_parquet(
-            cache.index_path, index=False,
-        )
-
-    def _probe_embedding_dim(self, model) -> int:
-        """Run a single dummy image through the model to discover embedding dimensionality."""
-        dummy = torch.randn(1, 3, 322, 322, device="cuda")
-        with torch.no_grad():
-            return model(dummy).shape[1]
+        return context

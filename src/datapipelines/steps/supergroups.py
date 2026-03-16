@@ -53,8 +53,8 @@ class AssignSuperGroupStep(BaseStep):
             .drop_duplicates("place_id")
             .reset_index(drop=True)
         )
-        place_df["outer_group"] = (
-            (place_df["cell_x"] % period) * period + (place_df["cell_y"] % period)
+        place_df["outer_group"] = (place_df["cell_x"] % period) * period + (
+            place_df["cell_y"] % period
         )
 
         # --- 2. Allocate subclusters proportionally -------------------------
@@ -94,7 +94,9 @@ class AssignSuperGroupStep(BaseStep):
         n_outer = len(outer_counts)
         target = max(self.total_supergroups, n_outer)
 
-        fracs = {og: (count / total_places) * target for og, count in outer_counts.items()}
+        fracs = {
+            og: (count / total_places) * target for og, count in outer_counts.items()
+        }
         alloc = {og: max(1, int(f)) for og, f in fracs.items()}
 
         remaining = target - sum(alloc.values())
@@ -124,8 +126,8 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
 
     Parameters
     ----------
-    name : str
-        Embedding name (subfolder under PLACEFORGE_FEATURE_STORE_DIR).
+    place_embedding_name : str
+        Name of the place embedding cache (subfolder under PLACEFORGE_FEATURE_STORE_DIR).
     total_supergroups : int
         Desired total number of supergroups across the entire dataset.
     kmeans_max_iter : int
@@ -134,62 +136,45 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         Random seed for reproducible clustering.
     """
 
-    ADJACENCY_CELLS = 2  # hardcoded spatial separation
+    ADJACENCY_CELLS = 2
 
     def __init__(
         self,
-        embedding_name: str,
+        place_embedding_name: str,
         total_supergroups: int = 64,
         kmeans_max_iter: int = 100,
         seed: int = 42,
-        recompute_places: bool = False,
     ) -> None:
         super().__init__()
         self.total_supergroups = total_supergroups
         self.kmeans_max_iter = kmeans_max_iter
         self.seed = seed
-        self.recompute_places = recompute_places
-        feature_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / embedding_name
-        self.place_cache = EmbeddingCache(feature_dir / "places")
-        if recompute_places:
-            self.image_cache = EmbeddingCache(feature_dir / "images")
+        self.place_cache = EmbeddingCache(
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / place_embedding_name
+        )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
-        period = self.ADJACENCY_CELLS + 1  # 3
+        period = self.ADJACENCY_CELLS + 1
 
         # --- 1. Outer group from spatial modular arithmetic -----------------
         place_df = (
             df[["place_id", "cell_x", "cell_y"]]
             .drop_duplicates("place_id")
-            .copy()
+            .reset_index(drop=True)
         )
-        place_df["outer_group"] = (
-            (place_df["cell_x"] % period) * period + (place_df["cell_y"] % period)
+        place_df["outer_group"] = (place_df["cell_x"] % period) * period + (
+            place_df["cell_y"] % period
         )
-        place_df = place_df.reset_index(drop=True)
 
-        # --- 2. Prepare embedding source ------------------------------------
-        if self.recompute_places:
-            # Build place_id → image cache rows using the filtered df.
-            # Only the index (small int arrays) is held in RAM; the mmap is
-            # accessed one outer group at a time in the loop below.
-            img_index = self.image_cache.load_index().set_index("id")
-            image_embs = self.image_cache.mmap()
-            place_to_img_rows: dict[int, np.ndarray] = {
-                pid: img_index.loc[sub["image_id"].values, "row"].values
-                for pid, sub in df.groupby("place_id")
-            }
-        else:
-            cache_index = self.place_cache.load_index().set_index("id")
-            place_embs = self.place_cache.mmap()
-            place_df["emb_row"] = cache_index.loc[place_df["place_id"].values, "row"].values
+        # --- 2. Load place embeddings ---------------------------------------
+        place_embs = self.place_cache.mmap()
+        place_df["emb_row"] = place_df["place_id"].values
 
         # --- 3. Allocate subclusters proportionally -------------------------
-        outer_counts = place_df["outer_group"].value_counts()
-        total_places = len(place_df)
-
-        allocation = self._allocate_clusters(outer_counts, total_places)
+        allocation = self._allocate_clusters(
+            place_df["outer_group"].value_counts(), len(place_df)
+        )
 
         # --- 4. KMeans sub-clustering within each outer group ---------------
         subcluster_col = np.zeros(len(place_df), dtype=np.int64)
@@ -198,29 +183,18 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         if self.pbar is not None:
             self.pbar.reset(total=len(unique_outer))
 
-        sg_offset = 0  # running offset to produce globally unique IDs
+        sg_offset = 0
 
         for og in unique_outer:
             mask = place_df["outer_group"].values == og
+            og_embeddings = place_embs[place_df.loc[mask, "emb_row"].values].astype(
+                np.float32
+            )
 
-            if self.recompute_places:
-                # Average surviving image embeddings per place — one outer
-                # group at a time, so peak RAM ≈ |og_places| × emb_dim.
-                og_place_ids = place_df.loc[mask, "place_id"].values
-                og_embeddings = np.stack([
-                    image_embs[place_to_img_rows[pid]].astype(np.float32).mean(axis=0)
-                    for pid in og_place_ids
-                ])
-            else:
-                og_emb_rows = place_df.loc[mask, "emb_row"].values
-                og_embeddings = place_embs[og_emb_rows].astype(np.float32)
-
-            # L2-normalise for cosine-based clustering
             norms = np.linalg.norm(og_embeddings, axis=1, keepdims=True)
             og_embeddings = og_embeddings / np.maximum(norms, 1e-8)
 
-            n_places = og_embeddings.shape[0]
-            k = min(allocation[og], n_places)
+            k = min(allocation[og], og_embeddings.shape[0])
 
             if k <= 1:
                 subcluster_col[mask] = sg_offset
@@ -240,10 +214,7 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
                 self.pbar.update(1)
 
         place_df["supergroup_id"] = subcluster_col
-        if not self.recompute_places:
-            place_df = place_df.drop(columns=["emb_row"])
 
-        # Map back to the image-level dataframe
         place_to_sg = place_df.set_index("place_id")["supergroup_id"]
         df["supergroup_id"] = df["place_id"].map(place_to_sg).astype(np.int64)
 
@@ -264,7 +235,9 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         target = max(self.total_supergroups, n_outer)  # at least 1 per group
 
         # Fractional allocation
-        fracs = {og: (count / total_places) * target for og, count in outer_counts.items()}
+        fracs = {
+            og: (count / total_places) * target for og, count in outer_counts.items()
+        }
 
         # Floor allocation — everyone gets at least 1
         alloc = {og: max(1, int(f)) for og, f in fracs.items()}

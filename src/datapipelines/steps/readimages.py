@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-import pandas as pd 
+import pandas as pd
 import os
 
 from .base import BaseStep
@@ -40,12 +40,14 @@ class ReadTrainImagesStep(BaseStep):
         records = []
         for image_id, image_path in enumerate(paths):
             utm_east, utm_north = _parse_utm(image_path.name)
-            records.append({
-                "image_id": image_id,
-                "image_path": str(image_path.relative_to(self.raw_dir)),
-                "utm_east": utm_east,
-                "utm_north": utm_north,
-            })
+            records.append(
+                {
+                    "image_id": image_id,
+                    "image_path": str(image_path.relative_to(self.raw_dir)),
+                    "utm_east": utm_east,
+                    "utm_north": utm_north,
+                }
+            )
             if self.pbar is not None:
                 self.pbar.update(1)
 
@@ -53,7 +55,12 @@ class ReadTrainImagesStep(BaseStep):
 
     def _iter_image_paths(self):
         for path in sorted(self.data_root.rglob("*")):
-            if path.is_file() and path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+            if path.is_file() and path.suffix.lower() in (
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+            ):
                 yield path
 
 
@@ -80,13 +87,15 @@ class ReadValImagesStep(BaseStep):
             [(p, True) for p in query_paths] + [(p, False) for p in database_paths]
         ):
             utm_east, utm_north = _parse_utm(image_path.name)
-            records.append({
-                "image_id": image_id,
-                "image_path": str(image_path.relative_to(self.raw_dir)),
-                "is_query": is_query,
-                "utm_east": utm_east,
-                "utm_north": utm_north,
-            })
+            records.append(
+                {
+                    "image_id": image_id,
+                    "image_path": str(image_path.relative_to(self.raw_dir)),
+                    "is_query": is_query,
+                    "utm_east": utm_east,
+                    "utm_north": utm_north,
+                }
+            )
             if self.pbar is not None:
                 self.pbar.update(1)
 
@@ -94,5 +103,10 @@ class ReadValImagesStep(BaseStep):
 
     def _iter_image_paths(self, root: Path):
         for path in sorted(root.rglob("*")):
-            if path.is_file() and path.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"):
+            if path.is_file() and path.suffix.lower() in (
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+            ):
                 yield path

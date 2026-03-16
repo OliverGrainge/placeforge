@@ -57,7 +57,6 @@ class SummaryTrainDataset(BaseStep):
         return context
 
 
-
 class SummaryValDataset(BaseStep):
     def __init__(self, name: str) -> None:
         super().__init__()
@@ -71,7 +70,9 @@ class SummaryValDataset(BaseStep):
         query_df = df[df["is_query"]]
         database_df = df[~df["is_query"]]
 
-        match_counts = query_df["matches"].apply(lambda m: len(m) if m is not None else 0)
+        match_counts = query_df["matches"].apply(
+            lambda m: len(m) if m is not None else 0
+        )
         queries_with_no_matches = int((match_counts == 0).sum())
 
         summary = {
@@ -90,7 +91,11 @@ class SummaryValDataset(BaseStep):
                 "median": float(match_counts.median()),
             },
             "queries_with_no_matches": queries_with_no_matches,
-            "queries_with_no_matches_pct": float(queries_with_no_matches / len(query_df) * 100) if len(query_df) > 0 else 0.0,
+            "queries_with_no_matches_pct": (
+                float(queries_with_no_matches / len(query_df) * 100)
+                if len(query_df) > 0
+                else 0.0
+            ),
         }
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

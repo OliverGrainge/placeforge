@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import pandas as pd
-import os 
+import os
 from PIL import Image
 from torch.utils.data import Dataset
 
@@ -21,7 +21,9 @@ class ValDataset(Dataset):
         self.transform = transform
 
         if not self.parquet_path.exists():
-            raise FileNotFoundError(f"Validation dataset not found: {self.parquet_path}")
+            raise FileNotFoundError(
+                f"Validation dataset not found: {self.parquet_path}"
+            )
 
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
         self.df = pd.read_parquet(self.parquet_path).set_index("image_id")
@@ -58,7 +60,6 @@ class ValDataset(Dataset):
                 db_positions = [id_to_db_pos[m] for m in matches if m in id_to_db_pos]
             result.append((qid, db_positions))
         return result
-    
 
 
 __all__ = ["VPRValidationDataset"]

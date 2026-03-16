@@ -10,7 +10,10 @@ from typing import Any
 
 def cmd_dataloader(args: argparse.Namespace) -> int:
     """Load one batch from the train dataloader and visualize it."""
-    from datamodules.datasets.train import PlaceImageTrainDataset, SupergroupBatchSampler
+    from datamodules.datasets.train import (
+        PlaceImageTrainDataset,
+        SupergroupBatchSampler,
+    )
 
     dataset = PlaceImageTrainDataset(
         args.index_path,
@@ -117,12 +120,16 @@ class _SimilarityModel:
         import torch.nn.functional as F
         from torchvision import transforms
 
-        preprocess = transforms.Compose([
-            transforms.Resize(224),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
+        preprocess = transforms.Compose(
+            [
+                transforms.Resize(224),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
         tensors = torch.stack([preprocess(img) for img in images]).to(self.device)
         with torch.no_grad():
             features = self._backbone.forward_features(tensors)
@@ -154,7 +161,6 @@ def _browse_places(dataset: Any, start_index: int = 0, show_sim: bool = False) -
     n_places = len(dataset)
     state = {"idx": start_index % n_places}
 
-
     def _load_all_images(idx: int) -> tuple[str, int, list[Any]]:
         place_id, supergroup_id, image_ids = dataset._places[idx]
         images = []
@@ -175,16 +181,24 @@ def _browse_places(dataset: Any, start_index: int = 0, show_sim: bool = False) -
 
         if show_sim and n >= 2:
             gs = gridspec.GridSpec(
-                img_rows, cols + 1,
+                img_rows,
+                cols + 1,
                 figure=fig,
                 width_ratios=[1.0] * cols + [0.6],
-                hspace=0.08, wspace=0.08,
+                hspace=0.08,
+                wspace=0.08,
             )
-            img_axes = [[fig.add_subplot(gs[r, c]) for c in range(cols)] for r in range(img_rows)]
+            img_axes = [
+                [fig.add_subplot(gs[r, c]) for c in range(cols)]
+                for r in range(img_rows)
+            ]
             heatmap_ax = fig.add_subplot(gs[:, cols])
         else:
             gs = gridspec.GridSpec(img_rows, cols, figure=fig, hspace=0.08, wspace=0.04)
-            img_axes = [[fig.add_subplot(gs[r, c]) for c in range(cols)] for r in range(img_rows)]
+            img_axes = [
+                [fig.add_subplot(gs[r, c]) for c in range(cols)]
+                for r in range(img_rows)
+            ]
             heatmap_ax = None
 
         for i, img in enumerate(images):
@@ -244,8 +258,15 @@ def _render_sim_heatmap(
     im = ax.imshow(sim_matrix, vmin=0.0, vmax=1.0, cmap="RdYlGn", aspect="equal")
     for i in range(n):
         for j in range(n):
-            ax.text(j, i, f"{sim_matrix[i, j]:.2f}", ha="center", va="center",
-                    fontsize=max(5, 8 - n // 3), color="black")
+            ax.text(
+                j,
+                i,
+                f"{sim_matrix[i, j]:.2f}",
+                ha="center",
+                va="center",
+                fontsize=max(5, 8 - n // 3),
+                color="black",
+            )
 
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))
@@ -257,6 +278,7 @@ def _render_sim_heatmap(
         spine.set_visible(False)
 
     from mpl_toolkits.axes_grid1 import make_axes_locatable
+
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.05)
     cb = ax.get_figure().colorbar(im, cax=cax)
@@ -269,6 +291,7 @@ def _render_sim_heatmap_b64(images: list[Any]) -> str:
     import base64
     import io
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -280,12 +303,16 @@ def _render_sim_heatmap_b64(images: list[Any]) -> str:
     fig.tight_layout(pad=0.4)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor=fig.get_facecolor())
+    fig.savefig(
+        buf, format="png", dpi=120, bbox_inches="tight", facecolor=fig.get_facecolor()
+    )
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _browse_places_web(dataset: Any, start_index: int = 0, port: int = 8765, show_sim: bool = False) -> None:
+def _browse_places_web(
+    dataset: Any, start_index: int = 0, port: int = 8765, show_sim: bool = False
+) -> None:
     """Interactive place browser served over HTTP — works on headless / SSH machines."""
     import base64
     import io
@@ -400,7 +427,9 @@ def build_parser() -> argparse.ArgumentParser:
         "dataloader",
         help="Visualize one batch from the train dataloader",
     )
-    dl_parser.add_argument("index_path", type=Path, help="Path to training index (.parquet)")
+    dl_parser.add_argument(
+        "index_path", type=Path, help="Path to training index (.parquet)"
+    )
     dl_parser.add_argument(
         "--places-per-batch",
         type=int,

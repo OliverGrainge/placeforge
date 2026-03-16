@@ -4,4 +4,4 @@ from .supergroups import AssignSuperGroupStep, AssignSuperGroupWithEmbedStep
 from .save import SaveTrainDataset, SaveValDataset
 from .matches import ComputeValMatchesStep
 from .summary import SummaryTrainDataset, SummaryValDataset
-from .embedding import ComputeEmbeddingStep
+from .embedding import ComputeImageEmbeddingStep, AggregatePlaceEmbeddingStep
