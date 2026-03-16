@@ -8,3 +8,5 @@ __pycache__/
 *.json
 *.parquet
 *.npy
+src/wandb/
+logs/*

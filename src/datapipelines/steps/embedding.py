@@ -32,12 +32,10 @@ class _ImageDataset(torch.utils.data.Dataset):
 
 class ComputeImageEmbeddingStep(BaseStep):
     """
-    Runs the model on all images in traindataset and writes embeddings to a
-    memory-mapped array indexed directly by image_id:
+    Runs the model on all images in traindataset and writes embeddings to an
+    EmbeddingCache (compact mmap + index.parquet mapping image_id → row).
 
-        embeddings[image_id] → embedding vector
-
-    Saved to <feature_store>/<image_embedding_name>/images.npy
+    Saved to <feature_store>/<image_embedding_name>/
     """
 
     TRANSFORM = T.Compose(
@@ -58,14 +56,12 @@ class ComputeImageEmbeddingStep(BaseStep):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
-        self.cache_path = (
-            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
-            / image_embedding_name
-            / "images.npy"
+        self.image_cache = EmbeddingCache(
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / image_embedding_name
         )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        if not self.cache_path.exists():
+        if not self.image_cache.exists:
             model = self._load_model()
             self._run_model(context["traindataset"], model)
             del model
@@ -73,21 +69,24 @@ class ComputeImageEmbeddingStep(BaseStep):
         return context
 
     def _run_model(self, df: pd.DataFrame, model) -> None:
-        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.image_cache.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        image_ids = df["image_id"].tolist()
+        sorted_image_ids = sorted(df["image_id"].unique().tolist())
+        id_to_row = {id_: row for row, id_ in enumerate(sorted_image_ids)}
+        n_images = len(sorted_image_ids)
         emb_dim = self._probe_embedding_dim(model)
 
         mmap = np.lib.format.open_memmap(
-            self.cache_path,
+            self.image_cache.npy_path,
             mode="w+",
             dtype=np.float32,
-            shape=(max(image_ids) + 1, emb_dim),
+            shape=(n_images, emb_dim),
         )
 
         if self.pbar is not None:
-            self.pbar.reset(total=len(df))
+            self.pbar.reset(total=n_images)
 
+        image_ids = df["image_id"].tolist()
         dataset = _ImageDataset(df["image_path"].tolist(), self.raw_dir, self.TRANSFORM)
         loader = torch.utils.data.DataLoader(
             dataset,
@@ -99,14 +98,19 @@ class ComputeImageEmbeddingStep(BaseStep):
 
         for images, indices in loader:
             batch_ids = [image_ids[i] for i in indices.tolist()]
+            batch_rows = [id_to_row[id_] for id_ in batch_ids]
             with torch.no_grad():
                 embs = model(images.cuda()).cpu().numpy()
-            mmap[batch_ids] = embs
+            mmap[batch_rows] = embs
             if self.pbar is not None:
                 self.pbar.update(len(batch_ids))
 
         mmap.flush()
         del mmap
+
+        pd.DataFrame({"id": sorted_image_ids, "row": np.arange(n_images)}).to_parquet(
+            self.image_cache.index_path, index=False
+        )
 
     @staticmethod
     def _load_model():
@@ -140,17 +144,18 @@ class AggregatePlaceEmbeddingStep(BaseStep):
     ) -> None:
         super().__init__()
         feature_store = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
-        self.image_cache_path = feature_store / image_embedding_name / "images.npy"
+        self.image_cache = EmbeddingCache(feature_store / image_embedding_name)
         self.place_cache = EmbeddingCache(feature_store / place_embedding_name)
         self.reduction = reduction
         self.normalize = normalize
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        if self.place_cache.npy_path.exists():
+        if self.place_cache.exists:
             return context
 
         df = context["traindataset"]
-        image_embs = np.load(self.image_cache_path, mmap_mode="r")
+        image_embs = self.image_cache.mmap()
+        image_index = self.image_cache.load_index().set_index("id")["row"]
 
         grouped = list(df.groupby("place_id", sort=True))
         n_places = len(grouped)
@@ -167,8 +172,10 @@ class AggregatePlaceEmbeddingStep(BaseStep):
         if self.pbar is not None:
             self.pbar.reset(total=n_places)
 
-        for place_id, (_, sub) in enumerate(grouped):
-            embs = image_embs[sub["image_id"].values].astype(np.float32)
+        index_ids = []
+        for row, (actual_place_id, sub) in enumerate(grouped):
+            rows = image_index.loc[sub["image_id"].values].values
+            embs = image_embs[rows].astype(np.float32)
 
             if self.reduction == "mean":
                 agg = embs.mean(axis=0)
@@ -180,12 +187,17 @@ class AggregatePlaceEmbeddingStep(BaseStep):
                 if norm > 0:
                     agg = agg / norm
 
-            mmap[place_id] = agg
+            mmap[row] = agg
+            index_ids.append(actual_place_id)
 
             if self.pbar is not None:
                 self.pbar.update(1)
 
         mmap.flush()
         del mmap
+
+        pd.DataFrame({"id": index_ids, "row": np.arange(n_places)}).to_parquet(
+            self.place_cache.index_path, index=False
+        )
 
         return context

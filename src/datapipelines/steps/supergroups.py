@@ -169,7 +169,8 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
 
         # --- 2. Load place embeddings ---------------------------------------
         place_embs = self.place_cache.mmap()
-        place_df["emb_row"] = place_df["place_id"].values
+        place_index = self.place_cache.load_index().set_index("id")["row"]
+        place_df["emb_row"] = place_df["place_id"].map(place_index)
 
         # --- 3. Allocate subclusters proportionally -------------------------
         allocation = self._allocate_clusters(

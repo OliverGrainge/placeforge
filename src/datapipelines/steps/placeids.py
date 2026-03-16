@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 
 from .base import BaseStep
+from .util import EmbeddingCache
 
 
 class AssignPlaceIdStep(BaseStep):
@@ -57,20 +58,19 @@ class AssignPlaceIdWithEmbedStep(BaseStep):
         self.cell_size_meters = cell_size_meters
         self.cos_sim_threshold = cos_sim_threshold
         self.min_images = min_images
-        self.image_cache_path = (
-            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
-            / image_embedding_name
-            / "images.npy"
+        self.image_cache = EmbeddingCache(
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / image_embedding_name
         )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = _assign_place_ids(context["traindataset"], self.cell_size_meters)
 
-        image_embs = np.load(self.image_cache_path, mmap_mode="r")
+        image_embs = self.image_cache.mmap()
+        image_index = self.image_cache.load_index().set_index("id")["row"]
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         groups = [
-            (sub.index.tolist(), sub["image_id"].values)
+            (sub.index.tolist(), image_index.loc[sub["image_id"].values].values)
             for _, sub in df.groupby("place_id")
         ]
 
@@ -79,9 +79,9 @@ class AssignPlaceIdWithEmbedStep(BaseStep):
 
         keep_mask = np.ones(len(df), dtype=bool)
 
-        for df_indices, image_ids in groups:
-            dropped = self._filter_place(image_embs[image_ids], device)
-            n_surviving = len(image_ids) - len(dropped)
+        for df_indices, image_rows in groups:
+            dropped = self._filter_place(image_embs[image_rows], device)
+            n_surviving = len(image_rows) - len(dropped)
 
             if n_surviving < self.min_images:
                 for idx in df_indices:
