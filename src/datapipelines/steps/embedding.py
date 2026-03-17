@@ -57,7 +57,10 @@ class ComputeImageEmbeddingStep(BaseStep):
         self.num_workers = num_workers
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
         self.image_cache = EmbeddingCache(
-            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / "embedding" / "image" / image_embedding_name
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
+            / "embedding"
+            / "image"
+            / image_embedding_name
         )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -144,8 +147,12 @@ class AggregatePlaceEmbeddingStep(BaseStep):
     ) -> None:
         super().__init__()
         feature_store = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
-        self.image_cache = EmbeddingCache(feature_store / "embedding" / "image" / image_embedding_name)
-        self.place_cache = EmbeddingCache(feature_store / "embedding" / "place" / place_embedding_name)
+        self.image_cache = EmbeddingCache(
+            feature_store / "embedding" / "image" / image_embedding_name
+        )
+        self.place_cache = EmbeddingCache(
+            feature_store / "embedding" / "place" / place_embedding_name
+        )
         self.reduction = reduction
         self.normalize = normalize
 

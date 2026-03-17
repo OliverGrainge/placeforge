@@ -6,6 +6,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 
 from .base import BaseStep
 
@@ -43,6 +45,13 @@ class SaveValDataset(BaseStep):
             shutil.rmtree(output_dir)
         output_dir.mkdir(parents=True)
 
-        context["valdataset"].to_parquet(output_path)
+        df = context["valdataset"]
+        # Parquet can't serialize numpy arrays; convert matches to lists
+        if "matches" in df.columns:
+            df = df.copy()
+            df["matches"] = df["matches"].apply(
+                lambda m: m if isinstance(m, list) else []
+            )
+        df.to_parquet(output_path)
 
         return context

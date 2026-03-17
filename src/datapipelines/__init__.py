@@ -53,12 +53,10 @@ def list_pipelines(category: PipelineCategory | None = None) -> tuple[str, ...]:
 
 
 # Import pipeline modules to trigger registration side-effects.
-from . import sf_xl_small  # noqa: E402, F401
-
-try:
-    from . import pitts30k  # noqa: E402, F401
-except ImportError:
-    pass  # val pipelines require extra steps (splitids, geomatches, etc.)
+from . import sf_xl_small  # noqa: E402, F401f
+from . import sf_xl
+from . import pitts30k
+from . import val
 
 
 __all__ = ["Pipeline", "get_pipeline", "list_pipelines", "register_pipeline"]

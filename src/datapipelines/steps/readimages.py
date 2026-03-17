@@ -29,15 +29,33 @@ def _parse_utm(filename: str) -> tuple[float | None, float | None]:
     return utm_east, utm_north
 
 
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+
+
+def _iter_sorted_image_paths(root: Path):
+    for current_root, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            if Path(filename).suffix.lower() in IMAGE_EXTENSIONS:
+                yield Path(current_root) / filename
+
+
 class ReadTrainImagesStep(BaseStep):
-    def __init__(self, data_root: str | Path) -> None:
+    def __init__(
+        self,
+        data_root: str | Path | list[str | Path],
+    ) -> None:
         super().__init__()
-        self.data_root = Path(data_root)
+        if isinstance(data_root, list):
+            self.data_roots = [Path(d) for d in data_root]
+        else:
+            self.data_roots = [Path(data_root)]
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        if not self.data_root.exists():
-            raise FileNotFoundError(f"Data root does not exist: {self.data_root}")
+        for data_root in self.data_roots:
+            if not data_root.exists():
+                raise FileNotFoundError(f"Data root does not exist: {data_root}")
 
         paths = list(self._iter_image_paths())
         if self.pbar is not None:
@@ -60,14 +78,8 @@ class ReadTrainImagesStep(BaseStep):
         return {**context, "traindataset": pd.DataFrame(records)}
 
     def _iter_image_paths(self):
-        for path in sorted(self.data_root.rglob("*")):
-            if path.is_file() and path.suffix.lower() in (
-                ".jpg",
-                ".jpeg",
-                ".png",
-                ".webp",
-            ):
-                yield path
+        for data_root in self.data_roots:
+            yield from _iter_sorted_image_paths(data_root)
 
 
 class ReadValImagesStep(BaseStep):
@@ -108,11 +120,4 @@ class ReadValImagesStep(BaseStep):
         return {**context, "valdataset": pd.DataFrame(records)}
 
     def _iter_image_paths(self, root: Path):
-        for path in sorted(root.rglob("*")):
-            if path.is_file() and path.suffix.lower() in (
-                ".jpg",
-                ".jpeg",
-                ".png",
-                ".webp",
-            ):
-                yield path
+        yield from _iter_sorted_image_paths(root)

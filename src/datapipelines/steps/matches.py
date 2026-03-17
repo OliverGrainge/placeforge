@@ -27,11 +27,11 @@ class ComputeValMatchesStep(BaseStep):
             db_neighbors = neighbors[neighbors != i]
             # Further filter to only database image indices
             db_neighbors = db_neighbors[~df["is_query"].iloc[db_neighbors].values]
-            df.at[i, "matches"] = image_ids[db_neighbors]
+            df.at[i, "matches"] = image_ids[db_neighbors].tolist()
 
         # Drop query rows with no database matches
         no_match_mask = query_mask & df["matches"].apply(
-            lambda m: m is not None and len(m) == 0
+            lambda m: m is not None and m.size == 0
         )
         df = df[~no_match_mask].reset_index(drop=True)
 

@@ -7,10 +7,22 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import KMeans
+
+import faiss
 
 from .base import BaseStep
 from .util import EmbeddingCache
+
+_USE_GPU = faiss.get_num_gpus() > 0
+
+
+def _spherical_kmeans(X: np.ndarray, k: int, max_iter: int, seed: int) -> np.ndarray:
+    """Spherical KMeans via faiss. Uses GPU automatically if faiss-gpu is installed."""
+    n, d = X.shape
+    km = faiss.Kmeans(d, k, niter=max_iter, seed=seed, spherical=True, gpu=_USE_GPU, verbose=False)
+    km.train(X)
+    _, labels = km.index.search(X, 1)
+    return labels.ravel().astype(np.int64)
 
 
 class AssignSuperGroupStep(BaseStep):
@@ -20,14 +32,17 @@ class AssignSuperGroupStep(BaseStep):
        no two places within ``adjacency_cells`` of each other share a group.
     2. **Sub-group** — within each outer group, places are randomly assigned
        to subclusters.  The number of subclusters per outer group is
-       allocated proportionally so the total hits ``total_supergroups``.
+       allocated proportionally so the total approximates
+       ``total_places / supergroup_size``.
 
     Parameters
     ----------
     adjacency_cells : int
         Minimum cell distance between places in the same outer group.
-    total_supergroups : int
-        Desired total number of supergroups across the dataset.
+    supergroup_size : int
+        Target number of places per supergroup.  The actual total number of
+        supergroups is derived at runtime as
+        ``max(1, total_places // supergroup_size)``.
     seed : int | None
         Random seed for reproducibility.
     """
@@ -35,12 +50,12 @@ class AssignSuperGroupStep(BaseStep):
     def __init__(
         self,
         adjacency_cells: int = 2,
-        total_supergroups: int = 64,
+        supergroup_size: int = 64,
         seed: int | None = 42,
     ) -> None:
         super().__init__()
         self.adjacency_cells = adjacency_cells
-        self.total_supergroups = total_supergroups
+        self.supergroup_size = supergroup_size
         self.seed = seed
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -57,9 +72,14 @@ class AssignSuperGroupStep(BaseStep):
             place_df["cell_y"] % period
         )
 
+        total_places = len(place_df)
+        total_supergroups = max(1, total_places // self.supergroup_size)
+
         # --- 2. Allocate subclusters proportionally -------------------------
         outer_counts = place_df["outer_group"].value_counts()
-        allocation = self._allocate_clusters(outer_counts, len(place_df))
+        allocation = self._allocate_clusters(
+            outer_counts, total_places, total_supergroups
+        )
 
         # --- 3. Random sub-assignment within each outer group ---------------
         rng = pyrandom.Random(self.seed)
@@ -82,17 +102,18 @@ class AssignSuperGroupStep(BaseStep):
 
         return {**context, "traindataset": df}
 
+    @staticmethod
     def _allocate_clusters(
-        self,
         outer_counts: pd.Series,
         total_places: int,
+        total_supergroups: int,
     ) -> dict[int, int]:
         """Distribute ``total_supergroups`` across outer groups proportionally,
         guaranteeing every non-empty group gets at least 1.
         Uses largest-remainder method so the sum is exactly total_supergroups.
         """
         n_outer = len(outer_counts)
-        target = max(self.total_supergroups, n_outer)
+        target = max(total_supergroups, n_outer)
 
         fracs = {
             og: (count / total_places) * target for og, count in outer_counts.items()
@@ -112,8 +133,7 @@ class AssignSuperGroupStep(BaseStep):
 
 
 class AssignSuperGroupWithEmbedStep(BaseStep):
-    """
-    Two-level supergroup assignment:
+    """Two-level supergroup assignment using place embeddings.
 
     1. **Outer group** — spatial modular arithmetic on (cell_x, cell_y) with
        adjacency=2, producing ``period² = 9`` outer groups.  No two places
@@ -122,14 +142,17 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
     2. **Sub-cluster** — within each outer group, run KMeans on L2-normalised
        place embeddings.  The number of subclusters per outer group is
        allocated proportionally to how many places it contains, so the
-       total across all outer groups hits ``total_supergroups``.
+       total across all outer groups approximates
+       ``total_places / supergroup_size``.
 
     Parameters
     ----------
     place_embedding_name : str
         Name of the place embedding cache (subfolder under PLACEFORGE_FEATURE_STORE_DIR).
-    total_supergroups : int
-        Desired total number of supergroups across the entire dataset.
+    supergroup_size : int
+        Target number of places per supergroup.  The actual total number of
+        supergroups is derived at runtime as
+        ``max(1, total_places // supergroup_size)``.
     kmeans_max_iter : int
         Maximum KMeans iterations.
     seed : int
@@ -141,16 +164,19 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
     def __init__(
         self,
         place_embedding_name: str,
-        total_supergroups: int = 64,
+        supergroup_size: int = 64,
         kmeans_max_iter: int = 100,
         seed: int = 42,
     ) -> None:
         super().__init__()
-        self.total_supergroups = total_supergroups
+        self.supergroup_size = supergroup_size
         self.kmeans_max_iter = kmeans_max_iter
         self.seed = seed
         self.place_cache = EmbeddingCache(
-            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / "embedding" / "place" / place_embedding_name
+            Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
+            / "embedding"
+            / "place"
+            / place_embedding_name
         )
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -167,14 +193,26 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
             place_df["cell_y"] % period
         )
 
+        total_places = len(place_df)
+        total_supergroups = max(1, total_places // self.supergroup_size)
+
         # --- 2. Load place embeddings ---------------------------------------
         place_embs = self.place_cache.mmap()
         place_index = self.place_cache.load_index().set_index("id")["row"]
+        # Align index dtype with place_id (parquet may use different int width)
+        place_index.index = place_index.index.astype(place_df["place_id"].dtype)
         place_df["emb_row"] = place_df["place_id"].map(place_index)
+        if place_df["emb_row"].isna().any():
+            n_missing = place_df["emb_row"].isna().sum()
+            raise ValueError(
+                f"{n_missing} place_ids not found in place embedding index. "
+                "Ensure AggregatePlaceEmbeddingStep ran on the same traindataset."
+            )
+        place_df["emb_row"] = place_df["emb_row"].astype(np.int64)
 
         # --- 3. Allocate subclusters proportionally -------------------------
         allocation = self._allocate_clusters(
-            place_df["outer_group"].value_counts(), len(place_df)
+            place_df["outer_group"].value_counts(), total_places, total_supergroups
         )
 
         # --- 4. KMeans sub-clustering within each outer group ---------------
@@ -201,14 +239,10 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
                 subcluster_col[mask] = sg_offset
                 sg_offset += 1
             else:
-                km = KMeans(
-                    n_clusters=k,
-                    init="k-means++",
-                    max_iter=self.kmeans_max_iter,
-                    n_init=10,
-                    random_state=self.seed,
+                labels = _spherical_kmeans(
+                    og_embeddings, k=k, max_iter=self.kmeans_max_iter, seed=self.seed
                 )
-                subcluster_col[mask] = km.fit_predict(og_embeddings) + sg_offset
+                subcluster_col[mask] = labels + sg_offset
                 sg_offset += k
 
             if self.pbar is not None:
@@ -221,29 +255,24 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
 
         return {**context, "traindataset": df}
 
+    @staticmethod
     def _allocate_clusters(
-        self,
         outer_counts: pd.Series,
         total_places: int,
+        total_supergroups: int,
     ) -> dict[int, int]:
-        """
-        Distribute ``total_supergroups`` across outer groups proportionally
-        to their place count, guaranteeing every non-empty group gets at least 1.
-
+        """Distribute ``total_supergroups`` across outer groups proportionally,
+        guaranteeing every non-empty group gets at least 1.
         Uses largest-remainder method so the sum is exactly total_supergroups.
         """
         n_outer = len(outer_counts)
-        target = max(self.total_supergroups, n_outer)  # at least 1 per group
+        target = max(total_supergroups, n_outer)
 
-        # Fractional allocation
         fracs = {
             og: (count / total_places) * target for og, count in outer_counts.items()
         }
-
-        # Floor allocation — everyone gets at least 1
         alloc = {og: max(1, int(f)) for og, f in fracs.items()}
 
-        # Distribute remaining slots by largest fractional remainder
         remaining = target - sum(alloc.values())
         if remaining > 0:
             remainders = {og: fracs[og] - alloc[og] for og in alloc}
@@ -254,7 +283,6 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
                 remaining -= 1
 
         return alloc
-
 
 
 class AssignCosPlaceSuperGroupStep(BaseStep):
@@ -293,25 +321,24 @@ class AssignCosPlaceSuperGroupStep(BaseStep):
         return {**context, "traindataset": df}
 
 
-
 class AssignEigenPlacesSuperGroupStep(BaseStep):
     """Assign supergroup IDs following the EigenPlaces partitioning strategy.
- 
+
     The paper partitions cells into non-overlapping subsets by taking
     every N-th cell in both the x and y directions.  This guarantees
     that no two cells within the same subset are spatial neighbours,
     so they can safely be treated as independent classes within a
     single training epoch.
- 
+
     The method produces N² supergroups via modular arithmetic on the
     cell coordinates:
- 
+
         supergroup_id = (cell_x % N) * N + (cell_y % N)
- 
+
     At training time one would iterate over supergroups (shifting
     after each epoch), using only the places inside each supergroup
     for a classification batch.
- 
+
     Parameters
     ----------
     N : int
@@ -320,23 +347,21 @@ class AssignEigenPlacesSuperGroupStep(BaseStep):
         same supergroup are at least 2 × cell_size apart, ensuring
         no visual overlap.  This produces 9 supergroups.
     """
- 
+
     def __init__(self, N: int = 3) -> None:
         super().__init__()
         self.N = N
- 
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
- 
+
         if "cell_x" not in df.columns or "cell_y" not in df.columns:
             raise KeyError(
                 "Columns 'cell_x' and 'cell_y' are required.  "
                 "Run AssignEigenPlacesPlaceIdStep first."
             )
- 
+
         # Modular arithmetic — mirrors the paper's epoch-shifting partition
-        df["supergroup_id"] = (
-            (df["cell_x"] % self.N) * self.N + (df["cell_y"] % self.N)
-        )
- 
+        df["supergroup_id"] = (df["cell_x"] % self.N) * self.N + (df["cell_y"] % self.N)
+
         return {**context, "traindataset": df}

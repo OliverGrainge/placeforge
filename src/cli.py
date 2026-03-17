@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from datapipelines import get_pipeline, list_pipelines
 
@@ -76,9 +79,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from dotenv import load_dotenv
-
-    load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.handler(args)
@@ -302,7 +302,9 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         ax.legend(fontsize=7)
         ax.tick_params(labelsize=7)
 
-    image_cache = EmbeddingCache(feature_store_dir / "embedding" / "image" / image_embedding_name)
+    image_cache = EmbeddingCache(
+        feature_store_dir / "embedding" / "image" / image_embedding_name
+    )
 
     if not image_cache.exists:
         print(
@@ -476,7 +478,9 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     print()
 
     # ── Inter-class variation ─────────────────────────────────────────────────
-    place_cache = EmbeddingCache(feature_store_dir / "embedding" / "place" / place_embedding_name)
+    place_cache = EmbeddingCache(
+        feature_store_dir / "embedding" / "place" / place_embedding_name
+    )
 
     if not place_cache.npy_path.exists():
         print(
