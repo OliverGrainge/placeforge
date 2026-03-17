@@ -28,7 +28,7 @@ datamodule:
     - sf_xl_small_val
   batch_size: 16
   images_per_place: 4
-  num_workers: 8
+  num_workers: 6
   transform:
     name: train
     image_size: 224

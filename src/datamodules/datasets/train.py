@@ -101,13 +101,20 @@ class TrainDataset(Dataset):
             place_ids: tensor of shape (B * images_per_place,), one per image
             supergroup_ids: list of supergroup_id, one per sample
         """
+        supergroup_ids = [sample["supergroup_id"] for sample in batch]
+        unique_supergroup_ids = set(supergroup_ids)
+        if len(unique_supergroup_ids) != 1:
+            raise AssertionError(
+                "Train batch mixed supergroup_ids: "
+                f"{sorted(unique_supergroup_ids)}"
+            )
+
         images = torch.stack([img for sample in batch for img in sample["images"]])
         place_ids = [
             pid
             for sample in batch
             for pid in [sample["place_id"]] * len(sample["images"])
         ]
-        supergroup_ids = [sample["supergroup_id"] for sample in batch]
         return {
             "images": images,
             "place_ids": torch.tensor(place_ids),
