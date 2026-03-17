@@ -1,5 +1,5 @@
 wandb:
-  project: placeforge
+  project: placeforge_sf_xl_small
   name: sf_xl_small_inter
 
 trainer:
@@ -9,7 +9,7 @@ trainer:
   devices: 1
   precision: 16-mixed
   log_every_n_steps: 10
-  val_check_interval: 200  # run validation every N steps
+  val_check_interval: 400  # run validation every N steps
   check_val_every_n_epoch: null
 
 module:
@@ -26,7 +26,7 @@ datamodule:
   train_dataset_name: sf_xl_small_inter
   val_dataset_names:
     - sf_xl_small_val
-  batch_size: 32
+  batch_size: 16
   images_per_place: 4
   num_workers: 2
   transform:

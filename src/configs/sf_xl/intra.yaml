@@ -26,12 +26,12 @@ datamodule:
   train_dataset_name: sf_xl_intra
   val_dataset_names:
     - sf_xl_small_val
-  batch_size: 32
+  batch_size: 16
   images_per_place: 4
-  num_workers: 2
+  num_workers: 8
   transform:
     name: train
     image_size: 224
   val_transform:
     name: eval
-    image_size: 2
+    image_size: 224

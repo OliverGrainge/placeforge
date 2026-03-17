@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 import pandas as pd
-from PIL import Image
+import torchvision.io
 from torch.utils.data import Dataset, Sampler
 
 
@@ -26,6 +26,7 @@ class TrainDataset(Dataset):
         self.place_id_to_supergroup = (
             self.df.groupby("place_id")["supergroup_id"].first().to_dict()
         )
+        self._supergroup_to_indices = self._build_supergroup_to_indices()
 
     def _load_df(self, name: str) -> pd.DataFrame:
         processed_dir = Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
@@ -48,7 +49,9 @@ class TrainDataset(Dataset):
 
         images = []
         for path in sampled_paths:
-            image = Image.open(self.raw_dir / path).convert("RGB")
+            image = torchvision.io.read_image(
+                str(self.raw_dir / path), mode=torchvision.io.ImageReadMode.RGB
+            )
             if self.transform is not None:
                 image = self.transform(image)
             images.append(image)
@@ -71,13 +74,15 @@ class TrainDataset(Dataset):
     def num_images(self) -> int:
         return len(self.df)
 
-    @property
-    def supergroup_to_indices(self) -> dict[Any, list[int]]:
-        """Mapping from supergroup_id to list of dataset indices (into place_ids)."""
+    def _build_supergroup_to_indices(self) -> dict[Any, list[int]]:
         sg_to_idx: dict[Any, list[int]] = defaultdict(list)
         for idx, place_id in enumerate(self.place_ids):
             sg_to_idx[self.place_id_to_supergroup[place_id]].append(idx)
         return dict(sg_to_idx)
+
+    @property
+    def supergroup_to_indices(self) -> dict[Any, list[int]]:
+        return self._supergroup_to_indices
 
     def get_batch_sampler(
         self, batch_size: int, drop_last: bool = False

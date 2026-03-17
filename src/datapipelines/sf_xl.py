@@ -29,6 +29,31 @@ DATA_ROOT = [
 ]
 
 
+
+@register_pipeline("sf_xl", category="train")
+def build_sf_xl() -> Pipeline:
+    name = "sf_xl"
+    return Pipeline(
+        name,
+        steps=[
+            ReadTrainImagesStep(data_root=DATA_ROOT),
+            ComputeImageEmbeddingStep(
+                image_embedding_name=IMAGE_EMBEDDING_NAME, batch_size=128, num_workers=8
+            ),
+            AssignPlaceIdStep(cell_size_meters=10.0),
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name=IMAGE_EMBEDDING_NAME,
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignSuperGroupStep(supergroup_size=64, adjacency_cells=2),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+        ],
+    )
+
+
 @register_pipeline("sf_xl_intra", category="train")
 def build_sf_xl_intra() -> Pipeline:
     name = "sf_xl_intra"

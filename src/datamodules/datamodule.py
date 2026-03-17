@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, List
 
 import pytorch_lightning as pl
@@ -16,7 +17,7 @@ class DataModule(pl.LightningDataModule):
         train_dataset_name: str,
         val_dataset_names: List[str],
         batch_size: int,
-        num_workers: int = 0,
+        num_workers: int = os.cpu_count() // 2,
         images_per_place: int = 4,
         train_transform: Any = None,
         val_transform: Any = None,
@@ -60,14 +61,15 @@ class DataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self) -> DataLoader | List[DataLoader]:
+        val_workers = max(1, self.num_workers // 2)
         return [
             DataLoader(
                 ds,
                 batch_size=self.batch_size,
                 shuffle=False,
-                num_workers=self.num_workers // 2,
+                num_workers=val_workers,
                 pin_memory=True,
-                persistent_workers=self.num_workers > 0,
+                persistent_workers=val_workers > 0,
             )
             for ds in self._val_datasets
         ]

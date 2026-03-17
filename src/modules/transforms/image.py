@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import torch
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 
@@ -17,7 +18,7 @@ class TrainTransform:
     """Standard augmented transform for training.
 
     Pipeline: Resize → RandomCrop → RandomHorizontalFlip → ColorJitter →
-              ToTensor → Normalize
+              ConvertImageDtype → Normalize
     """
 
     def __init__(
@@ -39,7 +40,7 @@ class TrainTransform:
                     saturation=color_jitter_strength,
                     hue=color_jitter_strength * 0.25,
                 ),
-                transforms.ToTensor(),
+                transforms.ConvertImageDtype(torch.float32),
                 transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
             ]
         )
@@ -52,7 +53,7 @@ class TrainTransform:
 class EvalTransform:
     """Deterministic centre-crop transform for validation and inference.
 
-    Pipeline: Resize → CenterCrop → ToTensor → Normalize
+    Pipeline: Resize → CenterCrop → ConvertImageDtype → Normalize
     """
 
     def __init__(self, image_size: int = 224) -> None:
@@ -61,7 +62,7 @@ class EvalTransform:
             [
                 transforms.Resize(scale_size, interpolation=InterpolationMode.BICUBIC),
                 transforms.CenterCrop(image_size),
-                transforms.ToTensor(),
+                transforms.ConvertImageDtype(torch.float32),
                 transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
             ]
         )

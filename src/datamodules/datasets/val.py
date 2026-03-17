@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import pandas as pd
 import os
-from PIL import Image
+import torchvision.io
 from torch.utils.data import Dataset
 
 
@@ -34,7 +34,9 @@ class ValDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, Any]:
         record = self.df.iloc[index]
         resolved_path = self.raw_dir / record["image_path"]
-        image = Image.open(resolved_path).convert("RGB")
+        image = torchvision.io.read_image(
+            str(resolved_path), mode=torchvision.io.ImageReadMode.RGB
+        )
         if self.transform is not None:
             image = self.transform(image)
         return {"image_id": index, "image": image}

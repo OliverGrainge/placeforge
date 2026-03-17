@@ -75,6 +75,46 @@ def build_parser() -> argparse.ArgumentParser:
     )
     datapipeline_parser.set_defaults(handler=_handle_datapipeline)
 
+    compare_parser = subparsers.add_parser(
+        "compare",
+        help="Compare dataset statistics in a terminal table",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Compare training datasets side-by-side.\n"
+            "Reads summary.json and stats.json from PLACEFORGE_PROCESSED_DIR/train/<name>/.\n"
+            "\n"
+            "Columns:\n"
+            "  Places        Number of unique place clusters\n"
+            "  Images        Total images in the dataset\n"
+            "  Img/place     Mean number of images per place\n"
+            "  Img/pl range  Min–max images per place\n"
+            "  Supergroups   Number of supergroups (higher-level spatial clusters)\n"
+            "  Pl/SG         Mean number of places per supergroup\n"
+            "  Pl/SG range   Min–max places per supergroup\n"
+            "\n"
+            "  Intra *       Cosine distance between images of the SAME place\n"
+            "                (lower = same-place images are more similar / tighter cluster)\n"
+            "  Intra mean    Mean of per-place mean pairwise cosine distances\n"
+            "  Intra p5/p95  5th / 95th percentile of per-place mean cosine distances\n"
+            "  Intra std     Std-dev of per-place mean cosine distances\n"
+            "\n"
+            "  Inter *       Cosine distance between places of the SAME supergroup\n"
+            "                (higher = places are more spread out / better separated)\n"
+            "  Inter mean    Mean of per-supergroup mean pairwise cosine distances\n"
+            "  Inter p5/p95  5th / 95th percentile of per-supergroup mean cosine distances\n"
+            "  Inter std     Std-dev of per-supergroup mean cosine distances\n"
+            "\n"
+            "  All cosine distances are in [0, 2]; 0 = identical, 1 = orthogonal.\n"
+            "  Intra/inter columns are omitted if no dataset in the comparison has that data.\n"
+        ),
+    )
+    compare_parser.add_argument(
+        "datasets",
+        nargs="+",
+        help="Dataset names to compare",
+    )
+    compare_parser.set_defaults(handler=_handle_compare)
+
     return parser
 
 
@@ -176,6 +216,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     import random
     import numpy as np
     import pandas as pd
+    import torch
     from tqdm import tqdm
     import matplotlib
 
@@ -212,53 +253,65 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     print("=" * 52)
     print()
 
-    # ── Sample batch figure → analysis/sample_batch.png ──────────────────────
+    # ── Sample batch figures → analysis/sample_batches/ ──────────────────────
+    out_dir = ds.dataset_dir
+    batches_dir = out_dir / "sample_batches"
+    batches_dir.mkdir(exist_ok=True)
+
     num_places = min(args.num_places, ds.num_places)
     n_cols = args.images_per_place
-    sampled_indices = random.sample(range(ds.num_places), num_places)
+    n_batches = 10
 
-    fig, axes = plt.subplots(
-        num_places,
-        n_cols,
-        figsize=(n_cols * 2.2, num_places * 2.2),
-        squeeze=False,
-    )
-    fig.subplots_adjust(hspace=0.05, wspace=0.05, left=0.12)
+    sg_to_indices = ds._supergroup_to_indices
+    eligible_sgs = [sg for sg, idxs in sg_to_indices.items() if len(idxs) >= 2]
 
-    for row, idx in enumerate(sampled_indices):
-        sample = ds[idx]
-        place_id = sample["place_id"]
-        sg_id = sample["supergroup_id"]
-        images = sample["images"]
+    for batch_i in range(n_batches):
+        # Mirror the real batching strategy: all places from the same supergroup
+        sg_id = random.choice(eligible_sgs)
+        indices = sg_to_indices[sg_id]
+        sampled_indices = random.sample(indices, min(num_places, len(indices)))
+        n_rows = len(sampled_indices)
+
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            figsize=(n_cols * 2.2, n_rows * 2.2),
+            squeeze=False,
+        )
+        fig.subplots_adjust(hspace=0.05, wspace=0.05, left=0.12)
+
+        for row, idx in enumerate(sampled_indices):
+            sample = ds[idx]
+            place_id = sample["place_id"]
+            images = sample["images"]
+            for col in range(n_cols):
+                ax = axes[row][col]
+                img = images[col]
+                img = img.permute(1, 2, 0).numpy()
+                ax.imshow(img)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                if col == 0:
+                    ax.set_ylabel(
+                        f"p{place_id}",
+                        fontsize=6,
+                        rotation=0,
+                        labelpad=28,
+                        va="center",
+                    )
+
         for col in range(n_cols):
-            ax = axes[row][col]
-            img = images[col]
-            img.thumbnail((224, 224))
-            ax.imshow(img)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            if col == 0:
-                ax.set_ylabel(
-                    f"p{place_id}\nsg{sg_id}",
-                    fontsize=6,
-                    rotation=0,
-                    labelpad=28,
-                    va="center",
-                )
+            axes[0][col].set_title(f"img {col + 1}", fontsize=8)
+        fig.suptitle(
+            f"{args.dataset_name} — batch {batch_i + 1}/{n_batches} — supergroup {sg_id} — {n_rows} places × {n_cols} images",
+            fontsize=10,
+            y=1.002,
+        )
 
-    for col in range(n_cols):
-        axes[0][col].set_title(f"img {col + 1}", fontsize=8)
-    fig.suptitle(
-        f"{args.dataset_name} — {num_places} places × {n_cols} images",
-        fontsize=10,
-        y=1.002,
-    )
-
-    out_dir = ds.dataset_dir
-    batch_path = out_dir / "sample_batch.png"
-    fig.savefig(batch_path, dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved sample figure → {batch_path}")
+        batch_path = batches_dir / f"batch_{batch_i + 1:02d}.png"
+        fig.savefig(batch_path, dpi=120, bbox_inches="tight")
+        plt.close(fig)
+    print(f"  Saved {n_batches} sample batches → {batches_dir}/")
 
     # ── Shared helpers ────────────────────────────────────────────────────────
     image_embedding_name = args.image_embedding_name or args.dataset_name
@@ -316,6 +369,10 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         return 0
 
     # ── Intra-class variation ─────────────────────────────────────────────────
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        print(f"  GPU: {torch.cuda.get_device_name(0)}")
+
     df = ds.df.reset_index()
     emb_index = image_cache.load_index().set_index("id")["row"]
     emb_mmap = image_cache.mmap()
@@ -327,33 +384,67 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     df = df.dropna(subset=["emb_row"])
     df["emb_row"] = df["emb_row"].astype(int)
 
-    per_place: list[dict] = []
-    skipped_single = 0
+    # Bulk-load all needed embeddings in one mmap read, then move to device
+    df = df.reset_index(drop=True)
+    all_emb_rows = df["emb_row"].values
+    all_vecs = torch.from_numpy(emb_mmap[all_emb_rows].astype(np.float32))  # keep on CPU
+    df["local_row"] = np.arange(len(df))
 
-    for place_id, group in tqdm(
-        df.groupby("place_id"), desc="Intra-class distances", unit="place"
-    ):
-        rows = group["emb_row"].values
-        sg_id = group["supergroup_id"].iloc[0]
-        n = len(rows)
+    # Collect place groups, sorted by size for efficient padding
+    place_groups: list[tuple] = []
+    skipped_single = 0
+    for place_id, group in df.groupby("place_id"):
+        n = len(group)
         if n < 2:
             skipped_single += 1
             continue
-        vecs = emb_mmap[rows].astype(np.float32)
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        vecs = vecs / np.where(norms == 0, 1.0, norms)
-        pairwise_dist = 1.0 - (vecs @ vecs.T)[np.triu_indices(n, k=1)]
-        per_place.append(
-            {
-                "place_id": int(place_id),
-                "supergroup_id": int(sg_id),
-                "n_images": int(n),
-                "mean_cos_dist": float(pairwise_dist.mean()),
-                "max_cos_dist": float(pairwise_dist.max()),
-                "min_cos_dist": float(pairwise_dist.min()),
-                "std_cos_dist": float(pairwise_dist.std()),
-            }
-        )
+        place_groups.append((
+            int(place_id),
+            int(group["supergroup_id"].iloc[0]),
+            group["local_row"].values,
+        ))
+    place_groups.sort(key=lambda x: len(x[2]))
+
+    per_place: list[dict] = []
+    INTRA_BATCH = 64
+
+    for batch_start in tqdm(
+        range(0, len(place_groups), INTRA_BATCH),
+        desc="Intra-class distances",
+        unit="batch",
+        total=(len(place_groups) + INTRA_BATCH - 1) // INTRA_BATCH,
+    ):
+        batch = place_groups[batch_start : batch_start + INTRA_BATCH]
+        B = len(batch)
+        max_n = len(batch[-1][2])  # sorted by size, last is largest
+        D = all_vecs.shape[1]
+
+        padded = torch.zeros(B, max_n, D, device=device)
+        ns = []
+        for j, (_, _, rows) in enumerate(batch):
+            n = len(rows)
+            ns.append(n)
+            v = all_vecs[rows].to(device)
+            v = v / v.norm(dim=1, keepdim=True).clamp(min=1e-8)
+            padded[j, :n] = v
+
+        dist_mat = (1.0 - torch.bmm(padded, padded.transpose(1, 2))).cpu().numpy()
+
+        for j, (place_id, sg_id, _) in enumerate(batch):
+            n = ns[j]
+            triu_i, triu_j = np.triu_indices(n, k=1)
+            pairwise_dist = dist_mat[j, triu_i, triu_j]
+            per_place.append(
+                {
+                    "place_id": place_id,
+                    "supergroup_id": sg_id,
+                    "n_images": n,
+                    "mean_cos_dist": float(pairwise_dist.mean()),
+                    "max_cos_dist": float(pairwise_dist.max()),
+                    "min_cos_dist": float(pairwise_dist.min()),
+                    "std_cos_dist": float(pairwise_dist.std()),
+                }
+            )
 
     if skipped_single:
         print(f"  Skipped {skipped_single} single-image places.")
@@ -444,7 +535,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         fig2, ax2 = plt.subplots(figsize=(max(8, n_sg * 0.35), 5))
         ax2.boxplot(
             sg_groups.values,
-            labels=[str(s) for s in sg_groups.index],
+            tick_labels=[str(s) for s in sg_groups.index],
             patch_artist=True,
             medianprops={"color": "black", "linewidth": 1.5},
             boxprops={"facecolor": "#4C72B0", "alpha": 0.6},
@@ -517,10 +608,10 @@ def _handle_analyse(args: argparse.Namespace) -> int:
             skipped_single_sg += 1
             continue
         rows = place_index.loc[place_ids].values
-        vecs = place_emb_mmap[rows].astype(np.float32)
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
-        vecs = vecs / np.where(norms == 0, 1.0, norms)
-        pairwise_dist = 1.0 - (vecs @ vecs.T)[np.triu_indices(n, k=1)]
+        vecs = torch.from_numpy(place_emb_mmap[rows].astype(np.float32)).to(device)
+        vecs = vecs / vecs.norm(dim=1, keepdim=True).clamp(min=1e-8)
+        triu_i, triu_j = torch.triu_indices(n, n, offset=1, device=device)
+        pairwise_dist = (1.0 - vecs @ vecs.T)[triu_i, triu_j].cpu().numpy()
         sg_pairwise_dists[int(sg_id)] = pairwise_dist.tolist()
         per_sg.append(
             {
@@ -615,7 +706,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         fig3, ax3 = plt.subplots(figsize=(max(8, n_sg * 0.35), 5))
         ax3.boxplot(
             [sg_pairwise_dists[s] for s in sorted_sg],
-            labels=[str(s) for s in sorted_sg],
+            tick_labels=[str(s) for s in sorted_sg],
             patch_artist=True,
             medianprops={"color": "black", "linewidth": 1.5},
             boxprops={"facecolor": "#C44E52", "alpha": 0.6},
@@ -697,6 +788,142 @@ def _load_initial_context(path: Path) -> dict[str, Any]:
         raise TypeError(f"INITIAL_CONTEXT in {path} must be a dict")
 
     return initial_context
+
+
+def _handle_compare(args: argparse.Namespace) -> int:
+    import json
+    import os
+
+    processed_dir = Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
+
+    # ── Collect rows ──────────────────────────────────────────────────────────
+    rows: list[dict] = []
+    for name in args.datasets:
+        base = processed_dir / "train" / name
+        summary_path = base / "summary.json"
+        stats_path = base / "stats.json"
+
+        if not summary_path.exists():
+            print(f"  Warning: summary.json not found for '{name}' — skipping")
+            continue
+
+        summary = json.loads(summary_path.read_text())
+        stats = json.loads(stats_path.read_text()) if stats_path.exists() else {}
+
+        n_places = summary["num_places"]
+        n_images = summary["num_images"]
+        n_supergroups = summary["num_supergroups"]
+        img_per_place_mean = summary["images_per_place"]["mean"]
+        img_per_place_min = summary["images_per_place"]["min"]
+        img_per_place_max = summary["images_per_place"]["max"]
+
+        # places per supergroup from supergroups section
+        sg_data = summary.get("supergroups", {})
+        if sg_data:
+            places_per_sg = [v["num_places"] for v in sg_data.values()]
+            avg_places_per_sg = sum(places_per_sg) / len(places_per_sg)
+            min_places_per_sg = min(places_per_sg)
+            max_places_per_sg = max(places_per_sg)
+        else:
+            avg_places_per_sg = n_places / n_supergroups if n_supergroups else float("nan")
+            min_places_per_sg = float("nan")
+            max_places_per_sg = float("nan")
+
+        intra = stats.get("intra", {}).get("summary", {})
+        inter = stats.get("inter", {}).get("summary", {})
+
+        row: dict = {
+            "name": name,
+            "places": n_places,
+            "images": n_images,
+            "img/place": img_per_place_mean,
+            "img/place range": f"{img_per_place_min}–{img_per_place_max}",
+            "supergroups": n_supergroups,
+            "places/sg": avg_places_per_sg,
+            "places/sg range": f"{min_places_per_sg:.0f}–{max_places_per_sg:.0f}" if sg_data else "—",
+        }
+
+        if intra:
+            m = intra["mean_cos_dist"]
+            row["intra mean"] = m["mean"]
+            row["intra p5"] = m["p5"]
+            row["intra p95"] = m["p95"]
+            row["intra std"] = m["std"]
+        else:
+            row["intra mean"] = row["intra p5"] = row["intra p95"] = row["intra std"] = None
+
+        if inter:
+            m = inter["mean_cos_dist"]
+            row["inter mean"] = m["mean"]
+            row["inter p5"] = m["p5"]
+            row["inter p95"] = m["p95"]
+            row["inter std"] = m["std"]
+        else:
+            row["inter mean"] = row["inter p5"] = row["inter p95"] = row["inter std"] = None
+
+        rows.append(row)
+
+    if not rows:
+        print("No datasets loaded.")
+        return 1
+
+    # ── Format helpers ────────────────────────────────────────────────────────
+    def _fmt(val: object, fmt: str = "") -> str:
+        if val is None:
+            return "—"
+        if isinstance(val, float):
+            return format(val, fmt) if fmt else f"{val:.4f}"
+        return str(val)
+
+    # ── Build column spec: (header, key, fmt_spec) ───────────────────────────
+    cols: list[tuple[str, str, str]] = [
+        ("Dataset",       "name",           ""),
+        ("Places",        "places",         ",d"),
+        ("Images",        "images",         ",d"),
+        ("Img/place",     "img/place",      ".1f"),
+        ("Img/pl range",  "img/place range",""),
+        ("Supergroups",   "supergroups",    ",d"),
+        ("Pl/SG",         "places/sg",      ".1f"),
+        ("Pl/SG range",   "places/sg range",""),
+        ("Intra mean",    "intra mean",     ".4f"),
+        ("Intra p5",      "intra p5",       ".4f"),
+        ("Intra p95",     "intra p95",      ".4f"),
+        ("Intra std",     "intra std",      ".4f"),
+        ("Inter mean",    "inter mean",     ".4f"),
+        ("Inter p5",      "inter p5",       ".4f"),
+        ("Inter p95",     "inter p95",      ".4f"),
+        ("Inter std",     "inter std",      ".4f"),
+    ]
+
+    # Drop columns where all rows are None / "—"
+    def _all_missing(key: str) -> bool:
+        return all(rows[i].get(key) is None for i in range(len(rows)))
+
+    cols = [(h, k, f) for h, k, f in cols if not _all_missing(k)]
+
+    # Compute column widths
+    widths = []
+    for header, key, fmt_spec in cols:
+        col_vals = [_fmt(r.get(key), fmt_spec) for r in rows]
+        widths.append(max(len(header), max(len(v) for v in col_vals)))
+
+    # ── Render ────────────────────────────────────────────────────────────────
+    sep = "─"
+    def _row_str(values: list[str]) -> str:
+        return "  " + "  │  ".join(v.rjust(w) for v, w in zip(values, widths))
+
+    def _sep_line() -> str:
+        return "──" + "──┼──".join(sep * w for w in widths)
+
+    print()
+    print(_row_str([h for h, _, _ in cols]))
+    print(_sep_line())
+    for r in rows:
+        vals = [_fmt(r.get(k), f) for _, k, f in cols]
+        print(_row_str(vals))
+    print()
+
+    return 0
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ class ComputeValMatchesStep(BaseStep):
 
         # Drop query rows with no database matches
         no_match_mask = query_mask & df["matches"].apply(
-            lambda m: m is not None and m.size == 0
+            lambda m: m is not None and len(m) == 0
         )
         df = df[~no_match_mask].reset_index(drop=True)
 

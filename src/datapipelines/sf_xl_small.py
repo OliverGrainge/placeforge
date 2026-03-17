@@ -126,40 +126,6 @@ def build_sf_xl_small_intra_inter() -> Pipeline:
     )
 
 
-@register_pipeline("sf_xl_small_diverse_intra_inter", category="train")
-def build_sf_xl_small_diverse_intra_inter() -> Pipeline:
-    name = "sf_xl_small_diverse_intra_inter"
-    return Pipeline(
-        name,
-        steps=[
-            ReadTrainImagesStep(data_root=raw_dir() / "sf_xl/small/train/"),
-            AssignPlaceIdStep(cell_size_meters=10.0),
-            ComputeImageEmbeddingStep(
-                image_embedding_name=IMAGE_EMBEDDING_NAME, batch_size=64, num_workers=8
-            ),
-            AssignDiversePlaceIdWithEmbedStep(
-                image_embedding_name=IMAGE_EMBEDDING_NAME,
-                cos_sim_threshold=0.3,
-                max_pair_similarity=0.94,
-                min_images=4,
-            ),
-            AggregatePlaceEmbeddingStep(
-                image_embedding_name=IMAGE_EMBEDDING_NAME,
-                place_embedding_name=name,
-                reduction="mean",
-                normalize=True,
-            ),
-            AssignSuperGroupWithEmbedStep(
-                place_embedding_name=name,
-                supergroup_size=64,
-                kmeans_max_iter=100,
-                seed=42,
-            ),
-            SaveTrainDataset(name=name),
-            SummaryTrainDataset(name=name),
-        ],
-    )
-
 
 @register_pipeline("sf_xl_small_cosplace", category="train")
 def build_sf_xl_small_cosplace() -> Pipeline:
