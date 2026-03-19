@@ -55,6 +55,12 @@ class DataModule(pl.LightningDataModule):
         self._val_datasets: List[ValDataset] = []
         self._test_datasets: List[TestDataset] = []
 
+    @property
+    def num_supergroups(self) -> int:
+        if self._train_dataset is None:
+            raise RuntimeError("setup() must be called before accessing num_supergroups")
+        return self._train_dataset.num_supergroups
+
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
             self._train_dataset = TrainDataset(
