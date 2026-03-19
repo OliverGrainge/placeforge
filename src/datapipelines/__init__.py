@@ -6,7 +6,7 @@ from typing import Literal
 from .base import Pipeline
 
 PipelineFactory = Callable[[], Pipeline]
-PipelineCategory = Literal["train", "val"]
+PipelineCategory = Literal["train", "val", "test"]
 
 # Maps pipeline_name -> (factory, category)
 _PIPELINE_REGISTRY: dict[str, tuple[PipelineFactory, PipelineCategory | None]] = {}
@@ -53,10 +53,9 @@ def list_pipelines(category: PipelineCategory | None = None) -> tuple[str, ...]:
 
 
 # Import pipeline modules to trigger registration side-effects.
-from . import sf_xl_small  # noqa: E402, F401f
-from . import sf_xl
-from . import pitts30k
+from . import train
 from . import val
+from . import test
 
 
 __all__ = ["Pipeline", "get_pipeline", "list_pipelines", "register_pipeline"]

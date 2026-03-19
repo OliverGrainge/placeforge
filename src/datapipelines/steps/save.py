@@ -55,3 +55,28 @@ class SaveValDataset(BaseStep):
         df.to_parquet(output_path)
 
         return context
+
+
+class SaveTestDataset(BaseStep):
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.name = name
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        processed_dir = os.environ["PLACEFORGE_PROCESSED_DIR"]
+        output_dir = Path(processed_dir) / "test" / self.name
+        output_path = output_dir / "testdataset.parquet"
+
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+
+        df = context["testdataset"]
+        if "matches" in df.columns:
+            df = df.copy()
+            df["matches"] = df["matches"].apply(
+                lambda m: m if isinstance(m, list) else []
+            )
+        df.to_parquet(output_path)
+
+        return context

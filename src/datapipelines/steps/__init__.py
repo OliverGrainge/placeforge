@@ -1,4 +1,4 @@
-from .readimages import ReadTrainImagesStep, ReadValImagesStep
+from .readimages import ReadTrainImagesStep, ReadValImagesStep, ReadTestImagesStep
 from .placeids import (
     AssignPlaceIdStep,
     AssignPlaceIdWithEmbedStep,
@@ -12,7 +12,7 @@ from .supergroups import (
     AssignCosPlaceSuperGroupStep,
     AssignEigenPlacesSuperGroupStep,
 )
-from .save import SaveTrainDataset, SaveValDataset
-from .matches import ComputeValMatchesStep
-from .summary import SummaryTrainDataset, SummaryValDataset
+from .save import SaveTrainDataset, SaveValDataset, SaveTestDataset
+from .matches import ComputeValMatchesStep, ComputeTestMatchesStep
+from .summary import SummaryTrainDataset, SummaryValDataset, SummaryTestDataset
 from .embedding import ComputeImageEmbeddingStep, AggregatePlaceEmbeddingStep

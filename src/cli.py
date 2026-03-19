@@ -70,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     datapipeline_parser.add_argument(
         "--category",
-        choices=["train", "val"],
-        help="Filter pipelines by category (train or val)",
+        choices=["train", "val", "test"],
+        help="Filter pipelines by category (train, val, or test)",
     )
     datapipeline_parser.set_defaults(handler=_handle_datapipeline)
 
@@ -757,7 +757,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
 def _handle_datapipeline(args: argparse.Namespace) -> int:
     if args.list:
         category: str | None = getattr(args, "category", None)
-        categories = [category] if category else ["train", "val"]
+        categories = [category] if category else ["train", "val", "test"]
         for cat in categories:
             names = list_pipelines(category=cat)
             print(f"{cat}:")

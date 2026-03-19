@@ -10,6 +10,14 @@ from datapipelines.steps import (
     SummaryValDataset,
 )
 
+PITTS30K_PATH = "pitts30k"
+TOKYO247_PATH = "tokyo247"
+SF_XL_SMALL_PATH = "sf_xl"
+SF_XL_PATH = "sf_xl"
+MSLS_PATH = "msls"
+NORDLAND_PATH = "VPR-datasets-downloader/datasets/nordland"
+SVOX_PATH = "VPR-datasets-downloader/datasets/svox"
+
 
 @register_pipeline("pitts30k_val", category="val")
 def build_pitts30k_pipeline() -> Pipeline:
@@ -18,8 +26,8 @@ def build_pitts30k_pipeline() -> Pipeline:
         PIPELINE_NAME,
         steps=[
             ReadValImagesStep(
-                query_path=raw_dir() / "pitts30k/images/val/queries",
-                database_path=raw_dir() / "pitts30k/images/val/database",
+                query_path=raw_dir() / PITTS30K_PATH / "images" / "val" / "queries",
+                database_path=raw_dir() / PITTS30K_PATH / "images" / "val" / "database",
             ),
             ComputeValMatchesStep(radius_meters=25),
             SaveValDataset(name=PIPELINE_NAME),
@@ -27,33 +35,17 @@ def build_pitts30k_pipeline() -> Pipeline:
         ],
     )
 
-
-@register_pipeline("tokyo247_val", category="val")
-def build_tokyo247_pipeline() -> Pipeline:
-    PIPELINE_NAME = "tokyo247_val"
-    return Pipeline(
-        PIPELINE_NAME,
-        steps=[
-            ReadValImagesStep(
-                query_path=raw_dir() / "tokyo247/images/test/queries",
-                database_path=raw_dir() / "tokyo247/images/test/database",
-            ),
-            ComputeValMatchesStep(radius_meters=25),
-            SaveValDataset(name=PIPELINE_NAME),
-            SummaryValDataset(name=PIPELINE_NAME),
-        ],
-    )
 
 
 @register_pipeline("sf_xl_small_val", category="val")
-def build_tokyo247_pipeline() -> Pipeline:
+def build_sf_xl_small_pipeline() -> Pipeline:
     PIPELINE_NAME = "sf_xl_small_val"
     return Pipeline(
         PIPELINE_NAME,
         steps=[
             ReadValImagesStep(
-                query_path=raw_dir() / "sf_xl/small/test/queries_v1/",
-                database_path=raw_dir() / "sf_xl/small/test/database/",
+                query_path=raw_dir() / SF_XL_SMALL_PATH / "small" / "val" / "queries",
+                database_path=raw_dir() / SF_XL_SMALL_PATH / "small" / "val" / "database",
             ),
             ComputeValMatchesStep(radius_meters=25),
             SaveValDataset(name=PIPELINE_NAME),
@@ -63,14 +55,14 @@ def build_tokyo247_pipeline() -> Pipeline:
 
 
 @register_pipeline("sf_xl_val", category="val")
-def build_tokyo247_pipeline() -> Pipeline:
+def build_sf_xl_pipeline() -> Pipeline:
     PIPELINE_NAME = "sf_xl_val"
     return Pipeline(
         PIPELINE_NAME,
         steps=[
             ReadValImagesStep(
-                query_path=raw_dir() / "sf_xl/processed/val/queries/",
-                database_path=raw_dir() / "sf_xl/processed/val/database/",
+                query_path=raw_dir() / SF_XL_PATH / "processed" / "val" / "queries",
+                database_path=raw_dir() / SF_XL_PATH / "processed" / "val" / "database",
             ),
             ComputeValMatchesStep(radius_meters=25),
             SaveValDataset(name=PIPELINE_NAME),
@@ -78,3 +70,36 @@ def build_tokyo247_pipeline() -> Pipeline:
         ],
     )
 
+
+@register_pipeline("msls_val", category="val")
+def build_msls_pipeline() -> Pipeline:
+    PIPELINE_NAME = "msls_val"
+    return Pipeline(
+        PIPELINE_NAME,
+        steps=[
+            ReadValImagesStep(
+                query_path=raw_dir() / MSLS_PATH / "val" / "queries",
+                database_path=raw_dir() / MSLS_PATH / "val" / "database",
+            ),
+            ComputeValMatchesStep(radius_meters=25),
+            SaveValDataset(name=PIPELINE_NAME),
+            SummaryValDataset(name=PIPELINE_NAME),
+        ],
+    )
+
+
+@register_pipeline("svox_val", category="val")
+def build_svox_pipeline() -> Pipeline:
+    PIPELINE_NAME = "svox_val"
+    return Pipeline(
+        PIPELINE_NAME,
+        steps=[
+            ReadValImagesStep(
+                query_path=raw_dir() / SVOX_PATH / "images" / "val" / "queries",
+                database_path=raw_dir() / SVOX_PATH / "images" / "val" / "gallery",
+            ),
+            ComputeValMatchesStep(radius_meters=25),
+            SaveValDataset(name=PIPELINE_NAME),
+            SummaryValDataset(name=PIPELINE_NAME),
+        ],
+    )

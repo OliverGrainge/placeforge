@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from . import register_datamodule
-from .datasets import TrainDataset, ValDataset
+from .datasets import TrainDataset, ValDataset, TestDataset
 
 
 def _dataloader_worker_init_fn(_worker_id: int) -> None:
@@ -34,9 +34,8 @@ class DataModule(pl.LightningDataModule):
         images_per_place: int = 4,
         train_transform: Any = None,
         val_transform: Any = None,
-        train_in_order: bool = False,
-        train_prefetch_factor: int = 4,
-        val_prefetch_factor: int = 2,
+        test_dataset_names: List[str] | None = None,
+        test_transform: Any = None,
     ):
         super().__init__()
         self.train_dataset_name = train_dataset_name
@@ -46,13 +45,13 @@ class DataModule(pl.LightningDataModule):
         self.images_per_place = images_per_place
         self.train_transform = train_transform
         self.val_transform = val_transform
-        self.train_in_order = train_in_order
-        self.train_prefetch_factor = train_prefetch_factor
-        self.val_prefetch_factor = val_prefetch_factor
+        self.test_dataset_names = test_dataset_names or []
+        self.test_transform = test_transform
         self.save_hyperparameters()
 
         self._train_dataset: TrainDataset | None = None
         self._val_datasets: List[ValDataset] = []
+        self._test_datasets: List[TestDataset] = []
 
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
@@ -65,6 +64,23 @@ class DataModule(pl.LightningDataModule):
                 ValDataset(name, transform=self.val_transform)
                 for name in self.val_dataset_names
             ]
+        if stage in (None, "test"):
+            self._test_datasets = [
+                TestDataset(name, transform=self.test_transform)
+                for name in self.test_dataset_names
+            ]
+
+    def _eval_dataloader(self, ds: ValDataset | TestDataset) -> DataLoader:
+        workers = max(1, self.num_workers // 2)
+        return DataLoader(
+            ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=workers,
+            worker_init_fn=_dataloader_worker_init_fn if workers > 0 else None,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=workers > 0,
+        )
 
     def train_dataloader(self) -> DataLoader:
         batch_sampler = self._train_dataset.get_batch_sampler(
@@ -76,33 +92,13 @@ class DataModule(pl.LightningDataModule):
             collate_fn=TrainDataset.collate_fn,
             num_workers=self.num_workers,
             worker_init_fn=_dataloader_worker_init_fn if self.num_workers > 0 else None,
-            prefetch_factor=(
-                self.train_prefetch_factor if self.num_workers > 0 else None
-            ),
-            pin_memory=True,
+            pin_memory=torch.cuda.is_available(),
             persistent_workers=self.num_workers > 0,
-            # Training batches are already randomized by the batch sampler, so
-            # allowing out-of-order delivery avoids head-of-line blocking when a
-            # worker gets a slower batch to decode and augment.
-            in_order=self.train_in_order,
+            in_order=False,
         )
 
-    def val_dataloader(self) -> DataLoader | List[DataLoader]:
-        val_workers = max(1, self.num_workers // 2)
-        return [
-            DataLoader(
-                ds,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=val_workers,
-                worker_init_fn=(
-                    _dataloader_worker_init_fn if val_workers > 0 else None
-                ),
-                prefetch_factor=(
-                    self.val_prefetch_factor if val_workers > 0 else None
-                ),
-                pin_memory=True,
-                persistent_workers=val_workers > 0,
-            )
-            for ds in self._val_datasets
-        ]
+    def val_dataloader(self) -> List[DataLoader]:
+        return [self._eval_dataloader(ds) for ds in self._val_datasets]
+
+    def test_dataloader(self) -> List[DataLoader]:
+        return [self._eval_dataloader(ds) for ds in self._test_datasets]

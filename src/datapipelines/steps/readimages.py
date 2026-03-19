@@ -121,3 +121,44 @@ class ReadValImagesStep(BaseStep):
 
     def _iter_image_paths(self, root: Path):
         yield from _iter_sorted_image_paths(root)
+
+
+class ReadTestImagesStep(BaseStep):
+    def __init__(self, query_path: str | Path, database_path: str | Path) -> None:
+        super().__init__()
+        self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
+        self.query_path = self.raw_dir / query_path
+        self.database_path = self.raw_dir / database_path
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        for path in (self.query_path, self.database_path):
+            if not path.exists():
+                raise FileNotFoundError(f"Directory does not exist: {path}")
+
+        query_paths = list(self._iter_image_paths(self.query_path))
+        database_paths = list(self._iter_image_paths(self.database_path))
+
+        if self.pbar is not None:
+            self.pbar.reset(total=len(query_paths) + len(database_paths))
+
+        records = []
+        for image_id, (image_path, is_query) in enumerate(
+            [(p, True) for p in query_paths] + [(p, False) for p in database_paths]
+        ):
+            utm_east, utm_north = _parse_utm(image_path.name)
+            records.append(
+                {
+                    "image_id": image_id,
+                    "image_path": str(image_path.relative_to(self.raw_dir)),
+                    "is_query": is_query,
+                    "utm_east": utm_east,
+                    "utm_north": utm_north,
+                }
+            )
+            if self.pbar is not None:
+                self.pbar.update(1)
+
+        return {**context, "testdataset": pd.DataFrame(records)}
+
+    def _iter_image_paths(self, root: Path):
+        yield from _iter_sorted_image_paths(root)
