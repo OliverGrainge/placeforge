@@ -133,6 +133,7 @@ class ResNet50GeM(nn.Module):
 
     def __init__(self, *, descriptor_dim: int) -> None:
         super().__init__()
+        self.descriptor_dim = descriptor_dim
         self.backbone = ResNet50Backbone()
         self.aggregation = SpatialGeMPooling()
         self.projection = nn.Linear(self.backbone.out_channels, descriptor_dim)
@@ -161,6 +162,7 @@ class ResNet50MixVPR(nn.Module):
         in_w: int = 7,
     ) -> None:
         super().__init__()
+        self.descriptor_dim = out_channels * out_rows
         self.backbone = ResNet50Backbone()
         self.aggregation = MixVPR(
             in_channels=self.backbone.out_channels,

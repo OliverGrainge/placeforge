@@ -85,11 +85,11 @@ class TrainDataset(Dataset):
         return self._supergroup_to_indices
 
     def get_batch_sampler(
-        self, batch_size: int, drop_last: bool = False
+        self, batch_size: int, drop_last: bool = False, sequential: bool = False
     ) -> SupergroupBatchSampler:
         """Return a batch sampler that groups samples by supergroup."""
         return SupergroupBatchSampler(
-            self.supergroup_to_indices, batch_size, drop_last=drop_last
+            self.supergroup_to_indices, batch_size, drop_last=drop_last, sequential=sequential
         )
 
     @staticmethod
@@ -123,30 +123,49 @@ class TrainDataset(Dataset):
 
 
 class SupergroupBatchSampler(Sampler):
-    """Yields batches of indices where all samples are from the same supergroup."""
+    """Yields batches of indices where all samples are from the same supergroup.
+
+    When ``sequential=False`` (default) all batches are globally shuffled,
+    freely interleaving supergroups.  When ``sequential=True`` the supergroup
+    order is shuffled once, then each supergroup is fully exhausted before
+    moving to the next.
+    """
 
     def __init__(
         self,
         supergroup_to_image_id: dict[Any, list[int]],
         batch_size: int,
         drop_last: bool = False,
+        sequential: bool = False,
     ):
         self.batch_size = batch_size
         self.drop_last = drop_last
+        self.sequential = sequential
         self.supergroup_to_indices = supergroup_to_image_id
 
     def __iter__(self):
-        all_batches = []
-        for sg, indices in self.supergroup_to_indices.items():
-            shuffled = indices.copy()
-            random.shuffle(shuffled)
-            for i in range(0, len(shuffled), self.batch_size):
-                batch = shuffled[i : i + self.batch_size]
-                if not self.drop_last or len(batch) == self.batch_size:
-                    all_batches.append(batch)
+        supergroups = list(self.supergroup_to_indices.keys())
+        random.shuffle(supergroups)
 
-        random.shuffle(all_batches)
-        yield from all_batches
+        if self.sequential:
+            for sg in supergroups:
+                shuffled = self.supergroup_to_indices[sg].copy()
+                random.shuffle(shuffled)
+                for i in range(0, len(shuffled), self.batch_size):
+                    batch = shuffled[i : i + self.batch_size]
+                    if not self.drop_last or len(batch) == self.batch_size:
+                        yield batch
+        else:
+            all_batches = []
+            for sg in supergroups:
+                shuffled = self.supergroup_to_indices[sg].copy()
+                random.shuffle(shuffled)
+                for i in range(0, len(shuffled), self.batch_size):
+                    batch = shuffled[i : i + self.batch_size]
+                    if not self.drop_last or len(batch) == self.batch_size:
+                        all_batches.append(batch)
+            random.shuffle(all_batches)
+            yield from all_batches
 
     def __len__(self) -> int:
         if self.drop_last:

@@ -198,6 +198,7 @@ class DinoV2GeM(nn.Module):
 
     def __init__(self, *, descriptor_dim: int) -> None:
         super().__init__()
+        self.descriptor_dim = descriptor_dim
         self.backbone = DinoV2Backbone()
         self.aggregation = GeMPooling(DinoV2Backbone.out_channels, descriptor_dim)
 
@@ -222,6 +223,7 @@ class DinoV2SALAD(nn.Module):
         dropout: float = 0.3,
     ) -> None:
         super().__init__()
+        self.descriptor_dim = num_clusters * cluster_dim + token_dim
         self.backbone = DinoV2Backbone()
         self.aggregation = SALAD(
             num_channels=DinoV2Backbone.out_channels,
@@ -252,6 +254,7 @@ class DinoV2BoQ(nn.Module):
         row_dim: int = 32,
     ) -> None:
         super().__init__()
+        self.descriptor_dim = proj_channels * row_dim
         self.backbone = DinoV2Backbone()
         self.aggregation = BoQ(
             in_channels=DinoV2Backbone.out_channels,

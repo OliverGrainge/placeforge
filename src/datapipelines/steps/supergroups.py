@@ -52,25 +52,37 @@ class AssignSuperGroupStep(BaseStep):
         adjacency_cells: int = 2,
         supergroup_size: int = 64,
         seed: int | None = 42,
+        heading_period: int = 2,
     ) -> None:
         super().__init__()
         self.adjacency_cells = adjacency_cells
         self.supergroup_size = supergroup_size
         self.seed = seed
+        self.heading_period = heading_period
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
         period = self.adjacency_cells + 1
+        has_heading = "cell_h" in df.columns
 
         # --- 1. Outer group from spatial modular arithmetic -----------------
+        place_cols = ["place_id", "cell_x", "cell_y"] + (["cell_h"] if has_heading else [])
         place_df = (
-            df[["place_id", "cell_x", "cell_y"]]
+            df[place_cols]
             .drop_duplicates("place_id")
             .reset_index(drop=True)
         )
-        place_df["outer_group"] = (place_df["cell_x"] % period) * period + (
-            place_df["cell_y"] % period
-        )
+        if has_heading:
+            hp = self.heading_period
+            place_df["outer_group"] = (
+                (place_df["cell_x"] % period) * (period * hp)
+                + (place_df["cell_y"] % period) * hp
+                + (place_df["cell_h"] % hp)
+            )
+        else:
+            place_df["outer_group"] = (place_df["cell_x"] % period) * period + (
+                place_df["cell_y"] % period
+            )
 
         total_places = len(place_df)
         total_supergroups = max(1, total_places // self.supergroup_size)
@@ -167,11 +179,13 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         supergroup_size: int = 64,
         kmeans_max_iter: int = 100,
         seed: int = 42,
+        heading_period: int = 2,
     ) -> None:
         super().__init__()
         self.supergroup_size = supergroup_size
         self.kmeans_max_iter = kmeans_max_iter
         self.seed = seed
+        self.heading_period = heading_period
         self.place_cache = EmbeddingCache(
             Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
             / "embedding"
@@ -182,16 +196,26 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
         period = self.ADJACENCY_CELLS + 1
+        has_heading = "cell_h" in df.columns
 
         # --- 1. Outer group from spatial modular arithmetic -----------------
+        place_cols = ["place_id", "cell_x", "cell_y"] + (["cell_h"] if has_heading else [])
         place_df = (
-            df[["place_id", "cell_x", "cell_y"]]
+            df[place_cols]
             .drop_duplicates("place_id")
             .reset_index(drop=True)
         )
-        place_df["outer_group"] = (place_df["cell_x"] % period) * period + (
-            place_df["cell_y"] % period
-        )
+        if has_heading:
+            hp = self.heading_period
+            place_df["outer_group"] = (
+                (place_df["cell_x"] % period) * (period * hp)
+                + (place_df["cell_y"] % period) * hp
+                + (place_df["cell_h"] % hp)
+            )
+        else:
+            place_df["outer_group"] = (place_df["cell_x"] % period) * period + (
+                place_df["cell_y"] % period
+            )
 
         total_places = len(place_df)
         total_supergroups = max(1, total_places // self.supergroup_size)

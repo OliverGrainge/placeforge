@@ -36,6 +36,7 @@ class DataModule(pl.LightningDataModule):
         val_transform: Any = None,
         test_dataset_names: List[str] | None = None,
         test_transform: Any = None,
+        sequential_supergroups: bool = False,
     ):
         super().__init__()
         self.train_dataset_name = train_dataset_name
@@ -47,6 +48,7 @@ class DataModule(pl.LightningDataModule):
         self.val_transform = val_transform
         self.test_dataset_names = test_dataset_names or []
         self.test_transform = test_transform
+        self.sequential_supergroups = sequential_supergroups
         self.save_hyperparameters()
 
         self._train_dataset: TrainDataset | None = None
@@ -84,7 +86,7 @@ class DataModule(pl.LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:
         batch_sampler = self._train_dataset.get_batch_sampler(
-            self.batch_size, drop_last=True
+            self.batch_size, drop_last=True, sequential=self.sequential_supergroups
         )
         return DataLoader(
             self._train_dataset,
