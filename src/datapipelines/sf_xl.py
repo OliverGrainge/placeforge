@@ -25,7 +25,7 @@ IMAGE_EMBEDDING_NAME = "sf_xl"
 
 
 DATA_ROOT = [
-    raw_dir() / "sf_xl/processed/train/37.74/", 
+    raw_dir() / "sf_xl/processed/train/",
 ]
 
 
@@ -147,6 +147,7 @@ def build_sf_xl_small_intra_inter() -> Pipeline:
             SummaryTrainDataset(name=name),
         ],
     )
+
 
 
 

@@ -51,10 +51,14 @@ class ComputeImageEmbeddingStep(BaseStep):
         image_embedding_name: str,
         batch_size: int = 32,
         num_workers: int = 0,
+        compile: bool = True,
+        half_precision: bool = True,
     ) -> None:
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.compile = compile
+        self.half_precision = half_precision
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
         self.image_cache = EmbeddingCache(
             Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
@@ -65,7 +69,7 @@ class ComputeImageEmbeddingStep(BaseStep):
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         if not self.image_cache.exists:
-            model = self._load_model()
+            model = self._load_model(self.compile)
             self._run_model(context["traindataset"], model)
             del model
             torch.cuda.empty_cache()
@@ -97,13 +101,17 @@ class ComputeImageEmbeddingStep(BaseStep):
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
+            persistent_workers=self.num_workers > 0,
+            prefetch_factor=2 if self.num_workers > 0 else None,
         )
 
+        autocast_dtype = torch.float16 if self.half_precision else torch.float32
         for images, indices in loader:
             batch_ids = [image_ids[i] for i in indices.tolist()]
             batch_rows = [id_to_row[id_] for id_ in batch_ids]
-            with torch.no_grad():
-                embs = model(images.cuda()).cpu().numpy()
+            images = images.cuda(non_blocking=True)
+            with torch.no_grad(), torch.autocast("cuda", dtype=autocast_dtype):
+                embs = model(images).float().cpu().numpy()
             mmap[batch_rows] = embs
             if self.pbar is not None:
                 self.pbar.update(len(batch_ids))
@@ -116,16 +124,19 @@ class ComputeImageEmbeddingStep(BaseStep):
         )
 
     @staticmethod
-    def _load_model():
+    def _load_model(compile: bool = True):
         with open(os.devnull, "w") as devnull:
             with redirect_stdout(devnull), redirect_stderr(devnull):
                 model = torch.hub.load("serizba/salad", "dinov2_salad")
-        return model.eval().cuda()
+        model = model.eval().cuda()
+        if compile:
+            model = torch.compile(model)
+        return model
 
     def _probe_embedding_dim(self, model) -> int:
         dummy = torch.randn(1, 3, 322, 322, device="cuda")
-        with torch.no_grad():
-            return model(dummy).shape[1]
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16 if self.half_precision else torch.float32):
+            return model(dummy).float().shape[1]
 
 
 class AggregatePlaceEmbeddingStep(BaseStep):

@@ -1,6 +1,6 @@
 wandb:
   project: placeforge_sf_xl_small
-  name: sf_xl_small_intra_inter
+  name: sf_xl_small_intra_inter_cell15_cos03_sg512
 
 trainer:
   max_steps: 10000  # use max_steps instead of max_epochs
@@ -9,7 +9,7 @@ trainer:
   devices: 1
   precision: 16-mixed
   log_every_n_steps: 10
-  val_check_interval: 400  # run validation every N steps
+  val_check_interval: 1000
   check_val_every_n_epoch: null
 
 module:
@@ -23,7 +23,7 @@ module:
 
 datamodule:
   name: place_recognition
-  train_dataset_name: sf_xl_small_intra_inter
+  train_dataset_name: sf_xl_small_intra_inter_cell15_cos03_sg512
   val_dataset_names:
     - sf_xl_small_val
   batch_size: 16

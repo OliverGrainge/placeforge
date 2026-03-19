@@ -1,6 +1,6 @@
 wandb:
   project: placeforge_sf_xl
-  name: sf_xl_inter
+  name: sf_xl_intra_inter_cell10_cos02_sg16
 
 trainer:
   max_steps: 10000  # use max_steps instead of max_epochs
@@ -23,10 +23,10 @@ module:
 
 datamodule:
   name: place_recognition
-  train_dataset_name: sf_xl_inter
+  train_dataset_name: sf_xl_intra_inter_cell10_cos02_sg16
   val_dataset_names:
     - sf_xl_val
-  batch_size: 16
+  batch_size: 32
   images_per_place: 4
   num_workers: 2
   transform:

@@ -60,3 +60,21 @@ def build_tokyo247_pipeline() -> Pipeline:
             SummaryValDataset(name=PIPELINE_NAME),
         ],
     )
+
+
+@register_pipeline("sf_xl_val", category="val")
+def build_tokyo247_pipeline() -> Pipeline:
+    PIPELINE_NAME = "sf_xl_val"
+    return Pipeline(
+        PIPELINE_NAME,
+        steps=[
+            ReadValImagesStep(
+                query_path=raw_dir() / "sf_xl/processed/val/queries/",
+                database_path=raw_dir() / "sf_xl/processed/val/database/",
+            ),
+            ComputeValMatchesStep(radius_meters=25),
+            SaveValDataset(name=PIPELINE_NAME),
+            SummaryValDataset(name=PIPELINE_NAME),
+        ],
+    )
+
