@@ -174,7 +174,7 @@ class AssignPlaceIdWithEmbedStep(BaseStep):
         cell_size_meters: float,
         cos_sim_threshold: float = 0.3,
         min_images: int = 2,
-        use_heading: bool = False,
+        use_heading: bool = True,
         heading_size_degrees: float = 30.0,
     ) -> None:
         super().__init__()

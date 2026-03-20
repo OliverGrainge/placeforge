@@ -61,6 +61,12 @@ class DataModule(pl.LightningDataModule):
             raise RuntimeError("setup() must be called before accessing num_supergroups")
         return self._train_dataset.num_supergroups
 
+    @property
+    def supergroup_num_places(self) -> dict:
+        if self._train_dataset is None:
+            raise RuntimeError("setup() must be called before accessing supergroup_num_places")
+        return self._train_dataset.supergroup_num_places
+
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
             self._train_dataset = TrainDataset(
@@ -73,10 +79,12 @@ class DataModule(pl.LightningDataModule):
                 for name in self.val_dataset_names
             ]
         if stage in (None, "test"):
-            self._test_datasets = [
-                TestDataset(name, transform=self.test_transform)
-                for name in self.test_dataset_names
-            ]
+            self._test_datasets = []
+            for name in self.test_dataset_names:
+                try:
+                    self._test_datasets.append(TestDataset(name, transform=self.test_transform))
+                except FileNotFoundError:
+                    self._test_datasets.append(ValDataset(name, transform=self.test_transform))
 
     def _eval_dataloader(self, ds: ValDataset | TestDataset) -> DataLoader:
         workers = max(1, self.num_workers // 2)

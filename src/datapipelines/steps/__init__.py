@@ -14,5 +14,5 @@ from .supergroups import (
 )
 from .save import SaveTrainDataset, SaveValDataset, SaveTestDataset
 from .matches import ComputeValMatchesStep, ComputeTestMatchesStep
-from .summary import SummaryTrainDataset, SummaryValDataset, SummaryTestDataset
+from .summary import PrintTrainDataset, SummaryTrainDataset, SummaryValDataset, SummaryTestDataset
 from .embedding import ComputeImageEmbeddingStep, AggregatePlaceEmbeddingStep

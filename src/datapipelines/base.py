@@ -17,7 +17,7 @@ class Pipeline:
 
         for step in self.steps:
             name = type(step).__name__
-            with tqdm(total=1, desc=name, leave=True) as pbar:
+            with tqdm(total=1, desc=name, leave=True, disable=not step.show_pbar) as pbar:
                 step.pbar = pbar
                 result = step.run(context)
                 if pbar.n < pbar.total:

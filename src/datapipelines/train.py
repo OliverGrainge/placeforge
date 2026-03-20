@@ -7,6 +7,7 @@ from datapipelines.steps import (
     ReadTrainImagesStep,
     AssignPlaceIdStep,
     AssignSuperGroupStep,
+    PrintTrainDataset,
     AssignPlaceIdWithEmbedStep,
     AssignCosPlacePlaceIdStep,
     AssignSuperGroupWithEmbedStep,
@@ -33,7 +34,7 @@ def build_sf_xl_cosplace() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=SF_XL_PATH / "processed" / "train"),
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl", batch_size=128, num_workers=8
             ),
@@ -57,7 +58,7 @@ def build_sf_xl_eigenplaces() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=SF_XL_PATH / "processed" / "train"),
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl", batch_size=128, num_workers=8
             ),
@@ -87,16 +88,18 @@ def build_sf_xl_small_intra_inter() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=SF_XL_PATH / "processed" / "train"),
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl", batch_size=128, num_workers=8
             ),
             AssignPlaceIdWithEmbedStep(
                 image_embedding_name="sf_xl",
                 cell_size_meters=10.0,
-                cos_sim_threshold=0.3,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.4,
                 min_images=4,
             ),
+            PrintTrainDataset(),
             AggregatePlaceEmbeddingStep(
                 image_embedding_name="sf_xl",
                 place_embedding_name=name,
@@ -105,10 +108,11 @@ def build_sf_xl_small_intra_inter() -> Pipeline:
             ),
             AssignSuperGroupWithEmbedStep(
                 place_embedding_name=name,
-                supergroup_size=64,
+                supergroup_size=512,
                 kmeans_max_iter=100,
                 seed=42,
             ),
+            PrintTrainDataset(),
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
         ],
@@ -125,11 +129,12 @@ def build_sf_xl_cosplace() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=SF_XL_PATH / "small" / "train"),
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "small" / "train"),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_small", batch_size=128, num_workers=8
             ),
             AssignCosPlacePlaceIdStep(cell_size_meters=10.0, heading_size_degrees=30.0),
+            PrintTrainDataset(),
             AggregatePlaceEmbeddingStep(
                 image_embedding_name="sf_xl_small",
                 place_embedding_name=name,
@@ -137,6 +142,7 @@ def build_sf_xl_cosplace() -> Pipeline:
                 normalize=True,
             ),
             AssignCosPlaceSuperGroupStep(N=5, L=2),
+            PrintTrainDataset(),
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
         ],
@@ -149,7 +155,7 @@ def build_sf_xl_eigenplaces() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=SF_XL_PATH / "small" / "train"),
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "small" / "train"),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_small", batch_size=128, num_workers=8
             ),
@@ -179,16 +185,18 @@ def build_sf_xl_small_intra_inter() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=SF_XL_PATH / "small" / "train"),
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "small" / "train"),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_small", batch_size=128, num_workers=8
             ),
             AssignPlaceIdWithEmbedStep(
                 image_embedding_name="sf_xl_small",
                 cell_size_meters=10.0,
-                cos_sim_threshold=0.3,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.4,
                 min_images=4,
             ),
+            PrintTrainDataset(),
             AggregatePlaceEmbeddingStep(
                 image_embedding_name="sf_xl_small",
                 place_embedding_name=name,
@@ -197,10 +205,11 @@ def build_sf_xl_small_intra_inter() -> Pipeline:
             ),
             AssignSuperGroupWithEmbedStep(
                 place_embedding_name=name,
-                supergroup_size=64,
+                supergroup_size=512,
                 kmeans_max_iter=100,
                 seed=42,
             ),
+            PrintTrainDataset(),
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
         ],

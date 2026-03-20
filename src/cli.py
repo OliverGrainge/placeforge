@@ -170,6 +170,15 @@ def _handle_train(args: argparse.Namespace) -> int:
             val_transform_name, **val_transform_kwargs
         )
 
+    test_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(
+        "test_transform", None
+    )
+    if test_transform_kwargs is not None:
+        test_transform_name = test_transform_kwargs.pop("name")
+        datamodule_kwargs["test_transform"] = get_transform(
+            test_transform_name, **test_transform_kwargs
+        )
+
     module = get_module(module_name, **module_kwargs)
     datamodule = get_datamodule(datamodule_name, **datamodule_kwargs)
 
@@ -178,6 +187,11 @@ def _handle_train(args: argparse.Namespace) -> int:
 
     trainer = pl.Trainer(**trainer_kwargs)
     trainer.fit(module, datamodule=datamodule)
+
+    if datamodule.test_dataset_names:
+        datamodule.setup("test")
+        trainer.test(module, datamodule=datamodule)
+
     return 0
 
 
@@ -265,7 +279,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     sg_to_indices = ds._supergroup_to_indices
     eligible_sgs = [sg for sg, idxs in sg_to_indices.items() if len(idxs) >= 2]
 
-    for batch_i in range(n_batches):
+    for batch_i in tqdm(range(n_batches), desc="Sample batches", unit="batch"):
         # Mirror the real batching strategy: all places from the same supergroup
         sg_id = random.choice(eligible_sgs)
         indices = sg_to_indices[sg_id]
@@ -373,22 +387,23 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     if device.type == "cuda":
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
 
+    print(f"  Loading embedding index ({image_embedding_name})...", flush=True, end=" ")
     df = ds.df.reset_index()
     emb_index = image_cache.load_index().set_index("id")["row"]
     emb_mmap = image_cache.mmap()
+    print("done.", flush=True)
 
+    print(f"  Joining {len(df):,} images to embedding index...", flush=True, end=" ")
     df = df.join(emb_index.rename("emb_row"), on="image_id", how="inner")
     missing = len(ds.df) - df["emb_row"].notna().sum()
     if missing:
-        print(f"  Warning: {missing} images have no embedding — skipping them.")
+        print(f"\n  Warning: {missing} images have no embedding — skipping them.")
     df = df.dropna(subset=["emb_row"])
     df["emb_row"] = df["emb_row"].astype(int)
-
-    # Bulk-load all needed embeddings in one mmap read, then move to device
     df = df.reset_index(drop=True)
-    all_emb_rows = df["emb_row"].values
-    all_vecs = torch.from_numpy(emb_mmap[all_emb_rows].astype(np.float32))  # keep on CPU
-    df["local_row"] = np.arange(len(df))
+    print("done.", flush=True)
+
+    D = emb_mmap.shape[1]
 
     # Collect place groups, sorted by size for efficient padding
     place_groups: list[tuple] = []
@@ -401,7 +416,7 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         place_groups.append((
             int(place_id),
             int(group["supergroup_id"].iloc[0]),
-            group["local_row"].values,
+            group["emb_row"].values,  # mmap row indices
         ))
     place_groups.sort(key=lambda x: len(x[2]))
 
@@ -417,16 +432,26 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         batch = place_groups[batch_start : batch_start + INTRA_BATCH]
         B = len(batch)
         max_n = len(batch[-1][2])  # sorted by size, last is largest
-        D = all_vecs.shape[1]
+
+        # Load this batch's embeddings with sorted mmap access
+        all_batch_rows = np.concatenate([rows for _, _, rows in batch])
+        sort_idx = np.argsort(all_batch_rows)
+        unsort = np.empty_like(sort_idx)
+        unsort[sort_idx] = np.arange(len(sort_idx))
+        batch_vecs = torch.from_numpy(
+            emb_mmap[all_batch_rows[sort_idx]].astype(np.float32)
+        )[unsort]
 
         padded = torch.zeros(B, max_n, D, device=device)
         ns = []
+        offset = 0
         for j, (_, _, rows) in enumerate(batch):
             n = len(rows)
             ns.append(n)
-            v = all_vecs[rows].to(device)
+            v = batch_vecs[offset : offset + n].to(device)
             v = v / v.norm(dim=1, keepdim=True).clamp(min=1e-8)
             padded[j, :n] = v
+            offset += n
 
         dist_mat = (1.0 - torch.bmm(padded, padded.transpose(1, 2))).cpu().numpy()
 

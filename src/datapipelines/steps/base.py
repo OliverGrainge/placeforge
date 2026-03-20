@@ -6,6 +6,7 @@ from typing import Any
 
 class BaseStep(ABC):
     pbar = None
+    show_pbar: bool = True
 
     @abstractmethod
     def run(self, context: dict[str, Any]) -> dict[str, Any] | None:

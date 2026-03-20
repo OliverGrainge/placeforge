@@ -84,6 +84,10 @@ class TrainDataset(Dataset):
     def supergroup_to_indices(self) -> dict[Any, list[int]]:
         return self._supergroup_to_indices
 
+    @property
+    def supergroup_num_places(self) -> dict[Any, int]:
+        return {sg: len(indices) for sg, indices in self._supergroup_to_indices.items()}
+
     def get_batch_sampler(
         self, batch_size: int, drop_last: bool = False, sequential: bool = False
     ) -> SupergroupBatchSampler:
@@ -99,7 +103,7 @@ class TrainDataset(Dataset):
         Returns:
             images: tensor of shape (B * images_per_place, C, H, W)
             place_ids: tensor of shape (B * images_per_place,), one per image
-            supergroup_ids: list of supergroup_id, one per sample
+            supergroup_id: scalar tensor, shared by all images in the batch
         """
         supergroup_ids = [sample["supergroup_id"] for sample in batch]
         unique_supergroup_ids = set(supergroup_ids)
@@ -118,7 +122,7 @@ class TrainDataset(Dataset):
         return {
             "images": images,
             "place_ids": torch.tensor(place_ids),
-            "supergroup_ids": torch.tensor(supergroup_ids),
+            "supergroup_id": torch.tensor(supergroup_ids[0]),
         }
 
 

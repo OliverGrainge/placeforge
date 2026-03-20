@@ -58,6 +58,7 @@ class ReadTrainImagesStep(BaseStep):
                 raise FileNotFoundError(f"Data root does not exist: {data_root}")
 
         paths = list(self._iter_image_paths())
+        #paths = list(self._iter_image_paths())[:30000] 
         if self.pbar is not None:
             self.pbar.reset(total=len(paths))
 

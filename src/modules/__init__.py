@@ -47,3 +47,8 @@ try:
     from . import contrastive as _contrastive
 except ModuleNotFoundError:
     _contrastive = None
+
+try:
+    from . import classification as _classification
+except ModuleNotFoundError:
+    _classification = None

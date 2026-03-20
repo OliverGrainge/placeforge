@@ -50,6 +50,39 @@ class ResNet50Backbone(nn.Module):
         return x
 
 
+class ResNet50BackboneUntrained(nn.Module):
+    """Randomly-initialised ResNet-50 (no pretrained weights), all layers trainable.
+
+    out_channels is always 2048.
+    """
+
+    out_channels = 2048
+
+    def __init__(self) -> None:
+        super().__init__()
+        m = resnet50(weights=None)
+
+        self.conv1   = m.conv1
+        self.bn1     = m.bn1
+        self.relu    = m.relu
+        self.maxpool = m.maxpool
+        self.layer1  = m.layer1
+        self.layer2  = m.layer2
+        self.layer3  = m.layer3
+        self.layer4  = m.layer4
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        return x
+
+
 # ---------------------------------------------------------------------------
 # Aggregation modules
 # ---------------------------------------------------------------------------
@@ -142,6 +175,21 @@ class ResNet50GeM(nn.Module):
         return self.projection(self.aggregation(self.backbone(images)))
 
 
+@register_model("resnet50_gem_untrained")
+class ResNet50GeMUntrained(nn.Module):
+    """ResNet-50 (randomly initialised) + Generalised Mean Pooling + linear projection."""
+
+    def __init__(self, *, descriptor_dim: int=512) -> None:
+        super().__init__()
+        self.descriptor_dim = descriptor_dim
+        self.backbone = ResNet50BackboneUntrained()
+        self.aggregation = SpatialGeMPooling()
+        self.projection = nn.Linear(self.backbone.out_channels, descriptor_dim)
+
+    def forward(self, images: Tensor) -> Tensor:
+        return self.projection(self.aggregation(self.backbone(images)))
+
+
 @register_model("resnet50_mixvpr")
 class ResNet50MixVPR(nn.Module):
     """ResNet-50 + MixVPR aggregation.
@@ -182,7 +230,9 @@ __all__ = [
     "FeatureMixerLayer",
     "MixVPR",
     "ResNet50Backbone",
+    "ResNet50BackboneUntrained",
     "ResNet50GeM",
+    "ResNet50GeMUntrained",
     "ResNet50MixVPR",
     "SpatialGeMPooling",
 ]

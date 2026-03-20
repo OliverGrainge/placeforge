@@ -168,9 +168,6 @@ class AggregatePlaceEmbeddingStep(BaseStep):
         self.normalize = normalize
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        if self.place_cache.exists:
-            return context
-
         df = context["traindataset"]
         image_embs = self.image_cache.mmap()
         image_index = self.image_cache.load_index().set_index("id")["row"]

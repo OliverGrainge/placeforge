@@ -169,9 +169,13 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         Maximum KMeans iterations.
     seed : int
         Random seed for reproducible clustering.
+    N : int
+        Spatial modulus — same as in ``AssignCosPlaceSuperGroupStep``.  Places
+        in the same outer group are at least ``N`` cells apart in x and y.
+    L : int
+        Heading modulus — same as in ``AssignCosPlaceSuperGroupStep``.  Places
+        in the same outer group are at least ``L`` heading buckets apart.
     """
-
-    ADJACENCY_CELLS = 2
 
     def __init__(
         self,
@@ -179,13 +183,15 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
         supergroup_size: int = 64,
         kmeans_max_iter: int = 100,
         seed: int = 42,
-        heading_period: int = 2,
+        N: int = 5,
+        L: int = 2,
     ) -> None:
         super().__init__()
         self.supergroup_size = supergroup_size
         self.kmeans_max_iter = kmeans_max_iter
         self.seed = seed
-        self.heading_period = heading_period
+        self.N = N
+        self.L = L
         self.place_cache = EmbeddingCache(
             Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
             / "embedding"
@@ -195,7 +201,6 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
-        period = self.ADJACENCY_CELLS + 1
         has_heading = "cell_h" in df.columns
 
         # --- 1. Outer group from spatial modular arithmetic -----------------
@@ -206,15 +211,14 @@ class AssignSuperGroupWithEmbedStep(BaseStep):
             .reset_index(drop=True)
         )
         if has_heading:
-            hp = self.heading_period
             place_df["outer_group"] = (
-                (place_df["cell_x"] % period) * (period * hp)
-                + (place_df["cell_y"] % period) * hp
-                + (place_df["cell_h"] % hp)
+                (place_df["cell_x"] % self.N) * (self.N * self.L)
+                + (place_df["cell_y"] % self.N) * self.L
+                + (place_df["cell_h"] % self.L)
             )
         else:
-            place_df["outer_group"] = (place_df["cell_x"] % period) * period + (
-                place_df["cell_y"] % period
+            place_df["outer_group"] = (place_df["cell_x"] % self.N) * self.N + (
+                place_df["cell_y"] % self.N
             )
 
         total_places = len(place_df)
