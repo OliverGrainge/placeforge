@@ -27,6 +27,7 @@ class TrainDataset(Dataset):
             self.df.groupby("place_id")["supergroup_id"].first().to_dict()
         )
         self._supergroup_to_indices = self._build_supergroup_to_indices()
+        self._place_id_to_local_label = self._build_place_id_to_local_label()
 
     def _load_df(self, name: str) -> pd.DataFrame:
         processed_dir = Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
@@ -59,6 +60,7 @@ class TrainDataset(Dataset):
         return {
             "images": images,
             "place_id": place_id,
+            "local_label": self._place_id_to_local_label[place_id],
             "supergroup_id": self.place_id_to_supergroup[place_id],
         }
 
@@ -79,6 +81,13 @@ class TrainDataset(Dataset):
         for idx, place_id in enumerate(self.place_ids):
             sg_to_idx[self.place_id_to_supergroup[place_id]].append(idx)
         return dict(sg_to_idx)
+
+    def _build_place_id_to_local_label(self) -> dict[Any, int]:
+        mapping: dict[Any, int] = {}
+        for indices in self._supergroup_to_indices.values():
+            for local_label, dataset_idx in enumerate(indices):
+                mapping[self.place_ids[dataset_idx]] = local_label
+        return mapping
 
     @property
     def supergroup_to_indices(self) -> dict[Any, list[int]]:
@@ -117,7 +126,7 @@ class TrainDataset(Dataset):
         place_ids = [
             pid
             for sample in batch
-            for pid in [sample["place_id"]] * len(sample["images"])
+            for pid in [sample["local_label"]] * len(sample["images"])
         ]
         return {
             "images": images,

@@ -164,7 +164,7 @@ class MixVPR(nn.Module):
 class ResNet50GeM(nn.Module):
     """ResNet-50 + Generalised Mean Pooling + linear projection."""
 
-    def __init__(self, *, descriptor_dim: int) -> None:
+    def __init__(self, *, descriptor_dim: int=512) -> None:
         super().__init__()
         self.descriptor_dim = descriptor_dim
         self.backbone = ResNet50Backbone()
