@@ -44,6 +44,7 @@ class PlaceRecognitionModule(pl.LightningModule):
         val_datasets = datamodule._val_datasets
         val_names = datamodule.val_dataset_names
 
+        r1_values: list[float] = []
         for dl_idx in sorted(self._val_store.keys()):
             all_embs = self._val_store[dl_idx]
             dataset = val_datasets[dl_idx]
@@ -58,6 +59,11 @@ class PlaceRecognitionModule(pl.LightningModule):
             name = val_names[dl_idx] if dl_idx < len(val_names) else str(dl_idx)
             for k, recall in recalls.items():
                 self.log(f"val/{name}/R@{k}", recall, prog_bar=(k == 1))
+            if 1 in recalls and not np.isnan(recalls[1]):
+                r1_values.append(recalls[1])
+
+        if r1_values:
+            self.log("val/R@1", float(np.mean(r1_values)))
 
         self._val_store.clear()
 

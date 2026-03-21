@@ -119,6 +119,44 @@ def build_sf_xl_small_intra_inter() -> Pipeline:
     )
 
 
+
+@register_pipeline("sf_xl_curavpr_cls", category="train")
+def build_sf_xl_small_intra_inter() -> Pipeline:
+    name = "sf_xl_curavpr_cls"
+    return Pipeline(
+        name,
+        steps=[
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ComputeImageEmbeddingStep(
+                image_embedding_name="sf_xl", batch_size=128, num_workers=8
+            ),
+            AssignPlaceIdWithEmbedStep(
+                image_embedding_name="sf_xl",
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.4,
+                min_images=4,
+            ),
+            PrintTrainDataset(),
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name="sf_xl",
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignSuperGroupWithEmbedStep(
+                place_embedding_name=name,
+                supergroup_size=512,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            PrintTrainDataset(),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+        ],
+    )
+
+
 # -----------------------------------------------------------------------------
 # sf_xl_small data pipelines (small dataset: small/train)
 # -----------------------------------------------------------------------------

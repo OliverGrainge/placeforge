@@ -18,7 +18,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     train_parser = subparsers.add_parser("train", help="Train a model")
     train_parser.add_argument("config", type=Path, help="Path to a YAML config file")
+    train_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume training from last.ckpt if it exists",
+    )
     train_parser.set_defaults(handler=_handle_train)
+
+    test_parser = subparsers.add_parser("test", help="Test a model from a checkpoint")
+    test_parser.add_argument(
+        "checkpoint",
+        type=Path,
+        help="Path to a checkpoint directory (loads last.ckpt) or a .ckpt file",
+    )
+    test_parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to a YAML config file (inferred from checkpoint dir if not given)",
+    )
+    test_parser.set_defaults(handler=_handle_test)
 
     analyse_parser = subparsers.add_parser(
         "analyse",
@@ -125,6 +144,17 @@ def main(argv: list[str] | None = None) -> int:
 
 
 _LOGS_DIR = Path(__file__).parent.parent / "logs"
+_CONFIGS_DIR = Path(__file__).parent / "configs"
+_CHECKPOINTS_DIR = Path(__file__).parent.parent / "checkpoints"
+
+
+def _checkpoint_dir(config_path: Path) -> Path:
+    """Return checkpoint dir mirroring the config's position under configs/."""
+    try:
+        rel = config_path.resolve().relative_to(_CONFIGS_DIR.resolve())
+    except ValueError:
+        rel = Path(config_path.stem)
+    return _CHECKPOINTS_DIR / rel.with_suffix("")
 
 
 def _handle_train(args: argparse.Namespace) -> int:
@@ -179,18 +209,147 @@ def _handle_train(args: argparse.Namespace) -> int:
             test_transform_name, **test_transform_kwargs
         )
 
+    from pytorch_lightning.callbacks import ModelCheckpoint
+
+    checkpoint_dir = _checkpoint_dir(args.config)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    callbacks: list[Any] = trainer_kwargs.pop("callbacks", [])
+    callbacks += [
+        ModelCheckpoint(
+            dirpath=str(checkpoint_dir),
+            filename="best",
+            monitor="val/R@1",
+            mode="max",
+            save_top_k=1,
+            save_last=False,
+        ),
+        ModelCheckpoint(
+            dirpath=str(checkpoint_dir),
+            filename="last",
+            save_top_k=0,
+            save_last=True,
+        ),
+    ]
+    trainer_kwargs["callbacks"] = callbacks
+
     module = get_module(module_name, **module_kwargs)
     datamodule = get_datamodule(datamodule_name, **datamodule_kwargs)
 
     datamodule.setup("fit")
     _print_dataset_summary(datamodule)
 
+    ckpt_path: str | None = None
+    if args.resume:
+        last_ckpt = checkpoint_dir / "last.ckpt"
+        if last_ckpt.exists():
+            print(f"Resuming from {last_ckpt}")
+            ckpt_path = str(last_ckpt)
+        else:
+            print(f"No checkpoint found at {last_ckpt}, starting from scratch")
+
     trainer = pl.Trainer(**trainer_kwargs)
-    trainer.fit(module, datamodule=datamodule)
+    trainer.fit(module, datamodule=datamodule, ckpt_path=ckpt_path)
 
     if datamodule.test_dataset_names:
         datamodule.setup("test")
         trainer.test(module, datamodule=datamodule)
+
+    return 0
+
+
+def _config_from_checkpoint_dir(ckpt_dir: Path) -> Path | None:
+    """Inverse of _checkpoint_dir: derive config path from a checkpoint directory."""
+    try:
+        rel = ckpt_dir.resolve().relative_to(_CHECKPOINTS_DIR.resolve())
+    except ValueError:
+        return None
+    return _CONFIGS_DIR / rel.with_suffix(".yaml")
+
+
+def _handle_test(args: argparse.Namespace) -> int:
+    import torch
+    import pytorch_lightning as pl
+
+    torch.set_float32_matmul_precision("high")
+
+    from datamodules import get_datamodule
+    from modules import get_module, get_transform
+
+    # Resolve checkpoint file
+    ckpt_path_arg = args.checkpoint.resolve()
+    if ckpt_path_arg.is_dir():
+        ckpt_file = ckpt_path_arg / "last.ckpt"
+        ckpt_dir = ckpt_path_arg
+    else:
+        ckpt_file = ckpt_path_arg
+        ckpt_dir = ckpt_path_arg.parent
+
+    if not ckpt_file.exists():
+        print(f"Checkpoint not found: {ckpt_file}")
+        return 1
+
+    # Resolve config
+    if args.config is not None:
+        config_path = args.config
+    else:
+        config_path = _config_from_checkpoint_dir(ckpt_dir)
+        if config_path is None or not config_path.exists():
+            print(
+                f"Cannot infer config from {ckpt_dir}. "
+                "Pass --config path/to/config.yaml explicitly."
+            )
+            return 1
+
+    config = yaml.safe_load(config_path.read_text())
+
+    trainer_kwargs: dict[str, Any] = config.get("trainer", {})
+    module_kwargs: dict[str, Any] = config.get("module", {})
+    datamodule_kwargs: dict[str, Any] = config.get("datamodule", {})
+
+    module_name = module_kwargs.pop("name")
+    datamodule_name = datamodule_kwargs.pop("name")
+
+    trainer_kwargs.setdefault("default_root_dir", str(_LOGS_DIR))
+    trainer_kwargs.pop("callbacks", None)
+
+    transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop("transform", None)
+    if transform_kwargs is not None:
+        transform_name = transform_kwargs.pop("name")
+        datamodule_kwargs["train_transform"] = get_transform(
+            transform_name, **transform_kwargs
+        )
+
+    val_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(
+        "val_transform", None
+    )
+    if val_transform_kwargs is not None:
+        val_transform_name = val_transform_kwargs.pop("name")
+        datamodule_kwargs["val_transform"] = get_transform(
+            val_transform_name, **val_transform_kwargs
+        )
+
+    test_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(
+        "test_transform", None
+    )
+    if test_transform_kwargs is not None:
+        test_transform_name = test_transform_kwargs.pop("name")
+        datamodule_kwargs["test_transform"] = get_transform(
+            test_transform_name, **test_transform_kwargs
+        )
+
+    module = get_module(module_name, **module_kwargs)
+    datamodule = get_datamodule(datamodule_name, **datamodule_kwargs)
+
+    if not datamodule.test_dataset_names:
+        print("No test datasets configured in this config.")
+        return 1
+
+    datamodule.setup("test")
+
+    print(f"Testing with checkpoint: {ckpt_file}")
+    trainer = pl.Trainer(**trainer_kwargs)
+    trainer.test(module, datamodule=datamodule, ckpt_path=str(ckpt_file))
 
     return 0
 
@@ -200,20 +359,29 @@ def _print_dataset_summary(datamodule: Any) -> None:
     val_datasets = datamodule._val_datasets
     val_names = datamodule.val_dataset_names
 
-    num_places = len(train_ds)
-    images_per_place = train_ds.images_per_place
+    num_places = train_ds.num_places
+    num_images = train_ds.num_images
     num_supergroups = train_ds.num_supergroups
+    sg_place_counts = list(train_ds.supergroup_num_places.values())
+    sg_min = min(sg_place_counts)
+    sg_max = max(sg_place_counts)
+    sg_mean = sum(sg_place_counts) / len(sg_place_counts)
 
     print()
     print("=" * 52)
     print(f"  Train: {datamodule.train_dataset_name}")
     print(f"    places:      {num_places:,}")
-    print(f"    images/place:{images_per_place:>6}")
+    print(f"    images:      {num_images:,}")
     print(f"    supergroups: {num_supergroups:,}")
-    print(
-        f"    batch size:  {datamodule.batch_size * images_per_place:,}  "
-        f"({datamodule.batch_size} places × {images_per_place} images)"
-    )
+    print(f"    places/sg:   {sg_mean:.1f}  (min {sg_min}  max {sg_max})")
+    if datamodule.sample_by_image:
+        print(f"    batch size:  {datamodule.batch_size:,}  (image-level)")
+    else:
+        images_per_place = train_ds.images_per_place
+        print(
+            f"    batch size:  {datamodule.batch_size * images_per_place:,}  "
+            f"({datamodule.batch_size} places × {images_per_place} images)"
+        )
 
     for name, ds in zip(val_names, val_datasets):
         print(f"  Val: {name}")

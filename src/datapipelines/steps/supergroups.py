@@ -390,6 +390,8 @@ class AssignEigenPlacesSuperGroupStep(BaseStep):
             )
 
         # Modular arithmetic — mirrors the paper's epoch-shifting partition
-        df["supergroup_id"] = (df["cell_x"] % self.N) * self.N + (df["cell_y"] % self.N)
+        # N² spatial groups × 2 view types (lateral=0, frontal=1)
+        spatial_group = (df["cell_x"] % self.N) * self.N + (df["cell_y"] % self.N)
+        df["supergroup_id"] = spatial_group * 2 + df["view_type"]
 
         return {**context, "traindataset": df}

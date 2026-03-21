@@ -6,6 +6,7 @@ import warnings
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 
 from . import register_model
 
@@ -28,8 +29,9 @@ class DinoV2Backbone(nn.Module):
     UNFREEZE_N_BLOCKS = 2
     out_channels = 768
 
-    def __init__(self) -> None:
+    def __init__(self, use_checkpointing: bool = False) -> None:
         super().__init__()
+        self.use_checkpointing = use_checkpointing
         self.dino = torch.hub.load("facebookresearch/dinov2", self.BACKBONE_NAME)
 
         for param in self.dino.parameters():
@@ -53,7 +55,10 @@ class DinoV2Backbone(nn.Module):
                 x = blk(x)
 
         for blk in self.dino.blocks[-self.UNFREEZE_N_BLOCKS:]:
-            x = blk(x)
+            if self.use_checkpointing:
+                x = checkpoint(blk, x, use_reentrant=False)
+            else:
+                x = blk(x)
 
         cls_token = x[:, 0]
         spatial = x[:, 1:].permute(0, 2, 1).view(B, self.out_channels, H // p, W // p)
@@ -187,6 +192,48 @@ class SALAD(nn.Module):
         return F.normalize(descriptor, p=2, dim=-1)
 
 
+class NetVLAD(nn.Module):
+    """NetVLAD aggregation over a spatial feature map (B, C, H, W).
+
+    Output shape: (B, num_clusters * in_channels), L2-normalised.
+    Reference: https://github.com/Nanne/pytorch-NetVlad
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        num_clusters: int = 64,
+        normalize_input: bool = True,
+    ) -> None:
+        super().__init__()
+        self.num_clusters = num_clusters
+        self.in_channels = in_channels
+        self.normalize_input = normalize_input
+
+        self.conv = nn.Conv2d(in_channels, num_clusters, kernel_size=1, bias=True)
+        self.centroids = nn.Parameter(torch.randn(num_clusters, in_channels))
+
+    def forward(self, spatial: Tensor, cls_token: Tensor) -> Tensor:  # noqa: ARG002
+        B, C, H, W = spatial.shape
+
+        if self.normalize_input:
+            spatial = F.normalize(spatial, p=2, dim=1)
+
+        # Soft assignment: (B, K, N)
+        soft_assign = F.softmax(self.conv(spatial).view(B, self.num_clusters, -1), dim=1)
+
+        # x_flat: (B, C, N)
+        x_flat = spatial.view(B, C, -1)
+
+        # VLAD: sum_x a_k(x) * (x - c_k) = sum_x a_k(x)*x - c_k * sum_x a_k(x)
+        vlad = torch.einsum("bkn,bcn->bkc", soft_assign, x_flat)
+        vlad -= soft_assign.sum(dim=2, keepdim=True) * self.centroids.unsqueeze(0)
+
+        # Intra-normalisation then global L2-norm
+        vlad = F.normalize(vlad, p=2, dim=2)
+        return F.normalize(vlad.flatten(1), p=2, dim=1)
+
+
 # ---------------------------------------------------------------------------
 # Registered architectures
 # ---------------------------------------------------------------------------
@@ -196,10 +243,10 @@ class SALAD(nn.Module):
 class DinoV2GeM(nn.Module):
     """DINOv2 + EigenPlaces GeM pooling with linear projection."""
 
-    def __init__(self, *, descriptor_dim: int) -> None:
+    def __init__(self, *, descriptor_dim: int, use_checkpointing: bool = False) -> None:
         super().__init__()
         self.descriptor_dim = descriptor_dim
-        self.backbone = DinoV2Backbone()
+        self.backbone = DinoV2Backbone(use_checkpointing=use_checkpointing)
         self.aggregation = GeMPooling(DinoV2Backbone.out_channels, descriptor_dim)
 
     def forward(self, images: Tensor) -> Tensor:
@@ -221,16 +268,45 @@ class DinoV2SALAD(nn.Module):
         cluster_dim: int = 128,
         token_dim: int = 256,
         dropout: float = 0.3,
+        use_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         self.descriptor_dim = num_clusters * cluster_dim + token_dim
-        self.backbone = DinoV2Backbone()
+        self.backbone = DinoV2Backbone(use_checkpointing=use_checkpointing)
         self.aggregation = SALAD(
             num_channels=DinoV2Backbone.out_channels,
             num_clusters=num_clusters,
             cluster_dim=cluster_dim,
             token_dim=token_dim,
             dropout=dropout,
+        )
+
+    def forward(self, images: Tensor) -> Tensor:
+        spatial, cls_token = self.backbone(images)
+        return self.aggregation(spatial, cls_token)
+
+
+@register_model("dinov2_netvlad")
+class DinoV2NetVLAD(nn.Module):
+    """DINOv2 + NetVLAD aggregation.
+
+    Output size is num_clusters * 768 (default 64 * 768 = 49152).
+    """
+
+    def __init__(
+        self,
+        *,
+        num_clusters: int = 64,
+        normalize_input: bool = True,
+        use_checkpointing: bool = False,
+    ) -> None:
+        super().__init__()
+        self.descriptor_dim = num_clusters * DinoV2Backbone.out_channels
+        self.backbone = DinoV2Backbone(use_checkpointing=use_checkpointing)
+        self.aggregation = NetVLAD(
+            in_channels=DinoV2Backbone.out_channels,
+            num_clusters=num_clusters,
+            normalize_input=normalize_input,
         )
 
     def forward(self, images: Tensor) -> Tensor:
@@ -252,10 +328,11 @@ class DinoV2BoQ(nn.Module):
         num_queries: int = 64,
         num_layers: int = 2,
         row_dim: int = 32,
+        use_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         self.descriptor_dim = proj_channels * row_dim
-        self.backbone = DinoV2Backbone()
+        self.backbone = DinoV2Backbone(use_checkpointing=use_checkpointing)
         self.aggregation = BoQ(
             in_channels=DinoV2Backbone.out_channels,
             proj_channels=proj_channels,
@@ -297,7 +374,9 @@ __all__ = [
     "DinoV2Backbone",
     "DinoV2BoQ",
     "DinoV2GeM",
+    "DinoV2NetVLAD",
     "DinoV2SALAD",
     "GeMPooling",
+    "NetVLAD",
     "SALAD",
 ]

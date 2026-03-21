@@ -406,7 +406,7 @@ class AssignEigenPlacesPlaceIdStep(BaseStep):
             (centroid + self.focal_distance * pc1, "front"),
         ]
 
-        for focal_point, _label in focal_points:
+        for focal_point, view_type in focal_points:
             delta_e = focal_point[0] - coords[:, 0]
             delta_n = focal_point[1] - coords[:, 1]
             alpha = np.degrees(np.arctan2(delta_e, delta_n)) % 360
@@ -421,6 +421,7 @@ class AssignEigenPlacesPlaceIdStep(BaseStep):
 
             sub = cell_df.iloc[np.where(mask)[0]].copy()
             sub["place_id"] = place_counter
+            sub["view_type"] = 0 if view_type == "lat" else 1
             records.append(sub)
             place_counter += 1
 

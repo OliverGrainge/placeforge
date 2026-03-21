@@ -2,21 +2,23 @@
 SHELL := /bin/bash
 
 
-train_datapipelines_sf_xl:
+datapipelines_sf_xl:
 	@source ../.venv/bin/activate && \
 	echo "--- sf_xl_cosplace ---" && python -m cli datapipeline sf_xl_cosplace && \
 	echo "--- sf_xl_eigenplaces ---" && python -m cli datapipeline sf_xl_eigenplaces && \
 	echo "--- sf_xl_curavpr ---" && python -m cli datapipeline sf_xl_curavpr
 
 
-train_datapipelines_sf_xl_small:
+datapipelines_sf_xl_small:
 	@source ../.venv/bin/activate && \
 	echo "--- sf_xl_small_cosplace ---" && python -m cli datapipeline sf_xl_small_cosplace && \
 	echo "--- sf_xl_small_eigenplaces ---" && python -m cli datapipeline sf_xl_small_eigenplaces && \
 	echo "--- sf_xl_small_curavpr ---" && python -m cli datapipeline sf_xl_small_curavpr
 
 
-val_datapipelines:
+
+
+datapipelines_val:
 	@source ../.venv/bin/activate && \
 	for pipeline in \
 		msls_val \
@@ -29,7 +31,7 @@ val_datapipelines:
 	done
 
 
-test_datapipelines:
+datapipelines_test:
 	@source ../.venv/bin/activate && \
 	for pipeline in \
 		nordland_test \
@@ -43,15 +45,15 @@ test_datapipelines:
 	done
 
 
-train_datapipelines: train_datapipelines_sf_xl train_datapipelines_sf_xl_small
+datapipelines_train: train_datapipelines_sf_xl train_datapipelines_sf_xl_small
 
 
 
 analyse_sf_xl:
 	@source ../.venv/bin/activate && \
-	echo "--- sf_xl_cosplace ---" && python -m cli analyse sf_xl_cosplace --image-embedding-name sf_xl --place-embedding-name sf_xl_cosplace && \
-	echo "--- sf_xl_eigenplaces ---" && python -m cli analyse sf_xl_eigenplaces --image-embedding-name sf_xl --place-embedding-name sf_xl_eigenplaces && \
-	echo "--- sf_xl_curavpr ---" && python -m cli analyse sf_xl_curavpr --image-embedding-name sf_xl --place-embedding-name sf_xl_curavpr
+	echo "--- sf_xl_cosplace ---" && python -m cli analyse sf_xl_cosplace && \
+	echo "--- sf_xl_eigenplaces ---" && python -m cli analyse sf_xl_eigenplaces && \
+	echo "--- sf_xl_curavpr ---" && python -m cli analyse sf_xl_curavpr
 
 
 analyse_sf_xl_small:

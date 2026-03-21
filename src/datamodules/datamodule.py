@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from . import register_datamodule
-from .datasets import TrainDataset, ValDataset, TestDataset
+from .datasets import ClassificationTrainDataset, TrainDataset, ValDataset, TestDataset
 
 
 def _dataloader_worker_init_fn(_worker_id: int) -> None:
@@ -36,7 +36,7 @@ class DataModule(pl.LightningDataModule):
         val_transform: Any = None,
         test_dataset_names: List[str] | None = None,
         test_transform: Any = None,
-        sequential_supergroups: bool = False,
+        sample_by_image: bool = False,
     ):
         super().__init__()
         self.train_dataset_name = train_dataset_name
@@ -48,10 +48,10 @@ class DataModule(pl.LightningDataModule):
         self.val_transform = val_transform
         self.test_dataset_names = test_dataset_names or []
         self.test_transform = test_transform
-        self.sequential_supergroups = sequential_supergroups
+        self.sample_by_image = sample_by_image
         self.save_hyperparameters()
 
-        self._train_dataset: TrainDataset | None = None
+        self._train_dataset: TrainDataset | ClassificationTrainDataset | None = None
         self._val_datasets: List[ValDataset] = []
         self._test_datasets: List[TestDataset] = []
 
@@ -69,11 +69,17 @@ class DataModule(pl.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
-            self._train_dataset = TrainDataset(
-                self.train_dataset_name,
-                images_per_place=self.images_per_place,
-                transform=self.train_transform,
-            )
+            if self.sample_by_image:
+                self._train_dataset = ClassificationTrainDataset(
+                    self.train_dataset_name,
+                    transform=self.train_transform,
+                )
+            else:
+                self._train_dataset = TrainDataset(
+                    self.train_dataset_name,
+                    images_per_place=self.images_per_place,
+                    transform=self.train_transform,
+                )
             self._val_datasets = [
                 ValDataset(name, transform=self.val_transform)
                 for name in self.val_dataset_names
@@ -100,12 +106,12 @@ class DataModule(pl.LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:
         batch_sampler = self._train_dataset.get_batch_sampler(
-            self.batch_size, drop_last=True, sequential=self.sequential_supergroups
+            self.batch_size, drop_last=True,
         )
         return DataLoader(
             self._train_dataset,
             batch_sampler=batch_sampler,
-            collate_fn=TrainDataset.collate_fn,
+            collate_fn=self._train_dataset.collate_fn,
             num_workers=self.num_workers,
             worker_init_fn=_dataloader_worker_init_fn if self.num_workers > 0 else None,
             pin_memory=torch.cuda.is_available(),

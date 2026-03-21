@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import math
 from typing import Any
 
@@ -119,16 +120,29 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         return loss
 
     def configure_optimizers(self):
+        criterion_params = list(itertools.chain.from_iterable(
+            c.parameters() for c in self.criterions
+        ))
+        criterion_ids = {id(p) for p in criterion_params}
+
         if hasattr(self.model, "backbone"):
             backbone_params = list(self.model.backbone.parameters())
             backbone_ids = {id(p) for p in backbone_params}
-            other_params = [p for p in self.parameters() if id(p) not in backbone_ids]
+            head_params = [
+                p for p in self.parameters()
+                if id(p) not in backbone_ids and id(p) not in criterion_ids
+            ]
             param_groups = [
                 {"params": backbone_params, "lr": self.learning_rate * self.backbone_lr_scale},
-                {"params": other_params, "lr": self.learning_rate},
+                {"params": head_params, "lr": self.learning_rate},
+                {"params": criterion_params, "lr": self.learning_rate, "weight_decay": 0.0},
             ]
         else:
-            param_groups = [{"params": list(self.parameters()), "lr": self.learning_rate}]
+            non_criterion_params = [p for p in self.parameters() if id(p) not in criterion_ids]
+            param_groups = [
+                {"params": non_criterion_params, "lr": self.learning_rate},
+                {"params": criterion_params, "lr": self.learning_rate, "weight_decay": 0.0},
+            ]
 
         optimizer = torch.optim.AdamW(
             param_groups,
