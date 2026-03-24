@@ -1,6 +1,6 @@
 wandb:
   project: placeforge_sf_xl
-  name: contrastive_curavpr_netvlad
+  name: contrastive_curavpr_gem
 
 trainer:
   max_steps: 10000  # use max_steps instead of max_epochs
@@ -15,7 +15,7 @@ trainer:
 
 module:
   name: contrastive
-  model_name: dinov2_netvlad
+  model_name: dinov2_gem
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   warmup_steps: 500
@@ -25,8 +25,9 @@ module:
 datamodule:
   name: place_recognition
   train_dataset_name: sf_xl_curavpr
+  sample_by_image: false
   val_dataset_names:
-    - pitts30k_val
+    - pitts30k_val 
   test_dataset_names:
     - pitts30k_test
     - msls_val

@@ -27,15 +27,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     test_parser = subparsers.add_parser("test", help="Test a model from a checkpoint")
     test_parser.add_argument(
-        "checkpoint",
+        "path",
         type=Path,
-        help="Path to a checkpoint directory (loads last.ckpt) or a .ckpt file",
+        help="Path to a config YAML, checkpoint directory, or .ckpt file",
     )
     test_parser.add_argument(
         "--config",
         type=Path,
         default=None,
         help="Path to a YAML config file (inferred from checkpoint dir if not given)",
+    )
+    test_parser.add_argument(
+        "--best",
+        action="store_true",
+        help="Use best.ckpt instead of last.ckpt when loading from a directory",
     )
     test_parser.set_defaults(handler=_handle_test)
 
@@ -223,12 +228,14 @@ def _handle_train(args: argparse.Namespace) -> int:
             mode="max",
             save_top_k=1,
             save_last=False,
+            enable_version_counter=False,
         ),
         ModelCheckpoint(
             dirpath=str(checkpoint_dir),
             filename="last",
             save_top_k=0,
             save_last=True,
+            enable_version_counter=False,
         ),
     ]
     trainer_kwargs["callbacks"] = callbacks
@@ -276,30 +283,37 @@ def _handle_test(args: argparse.Namespace) -> int:
     from datamodules import get_datamodule
     from modules import get_module, get_transform
 
-    # Resolve checkpoint file
-    ckpt_path_arg = args.checkpoint.resolve()
-    if ckpt_path_arg.is_dir():
-        ckpt_file = ckpt_path_arg / "last.ckpt"
-        ckpt_dir = ckpt_path_arg
+    # Resolve checkpoint file and config
+    path_arg = args.path.resolve()
+    ckpt_name = "best.ckpt" if args.best else "last.ckpt"
+
+    if path_arg.suffix in (".yaml", ".yml"):
+        # User passed a config file — derive checkpoint dir from it
+        config_path = path_arg
+        if not config_path.exists():
+            print(f"Config not found: {config_path}")
+            return 1
+        ckpt_dir = _checkpoint_dir(config_path)
+        ckpt_file = ckpt_dir / ckpt_name
+    elif path_arg.is_dir():
+        ckpt_dir = path_arg
+        ckpt_file = ckpt_dir / ckpt_name
+        config_path = args.config or _config_from_checkpoint_dir(ckpt_dir)
     else:
-        ckpt_file = ckpt_path_arg
-        ckpt_dir = ckpt_path_arg.parent
+        ckpt_file = path_arg
+        ckpt_dir = path_arg.parent
+        config_path = args.config or _config_from_checkpoint_dir(ckpt_dir)
 
     if not ckpt_file.exists():
         print(f"Checkpoint not found: {ckpt_file}")
         return 1
 
-    # Resolve config
-    if args.config is not None:
-        config_path = args.config
-    else:
-        config_path = _config_from_checkpoint_dir(ckpt_dir)
-        if config_path is None or not config_path.exists():
-            print(
-                f"Cannot infer config from {ckpt_dir}. "
-                "Pass --config path/to/config.yaml explicitly."
-            )
-            return 1
+    if config_path is None or not config_path.exists():
+        print(
+            f"Cannot infer config from {ckpt_dir}. "
+            "Pass --config path/to/config.yaml explicitly."
+        )
+        return 1
 
     config = yaml.safe_load(config_path.read_text())
 
@@ -348,6 +362,11 @@ def _handle_test(args: argparse.Namespace) -> int:
     datamodule.setup("test")
 
     print(f"Testing with checkpoint: {ckpt_file}")
+
+    import torch
+    _orig_torch_load = torch.load
+    torch.load = lambda *a, **kw: _orig_torch_load(*a, **{**kw, "weights_only": False})
+
     trainer = pl.Trainer(**trainer_kwargs)
     trainer.test(module, datamodule=datamodule, ckpt_path=str(ckpt_file))
 

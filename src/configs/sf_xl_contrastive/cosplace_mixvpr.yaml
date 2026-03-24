@@ -25,6 +25,7 @@ module:
 datamodule:
   name: place_recognition
   train_dataset_name: sf_xl_cosplace
+  sample_by_image: false
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

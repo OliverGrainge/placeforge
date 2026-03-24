@@ -211,7 +211,9 @@ class NetVLAD(nn.Module):
         self.normalize_input = normalize_input
 
         self.conv = nn.Conv2d(in_channels, num_clusters, kernel_size=1, bias=True)
-        self.centroids = nn.Parameter(torch.randn(num_clusters, in_channels))
+        self.centroids = nn.Parameter(
+            F.normalize(torch.randn(num_clusters, in_channels), p=2, dim=1)
+        )
 
     def forward(self, spatial: Tensor, cls_token: Tensor) -> Tensor:  # noqa: ARG002
         B, C, H, W = spatial.shape
@@ -243,7 +245,7 @@ class NetVLAD(nn.Module):
 class DinoV2GeM(nn.Module):
     """DINOv2 + EigenPlaces GeM pooling with linear projection."""
 
-    def __init__(self, *, descriptor_dim: int, use_checkpointing: bool = False) -> None:
+    def __init__(self, *, descriptor_dim: int = 2048, use_checkpointing: bool = False) -> None:
         super().__init__()
         self.descriptor_dim = descriptor_dim
         self.backbone = DinoV2Backbone(use_checkpointing=use_checkpointing)
