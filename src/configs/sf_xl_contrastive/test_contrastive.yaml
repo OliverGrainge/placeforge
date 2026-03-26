@@ -1,0 +1,46 @@
+wandb:
+  project: placeforge_sf_xl
+  name: test_contrastive
+
+trainer:
+  max_steps: 5
+  max_epochs: -1
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  log_every_n_steps: 1
+  val_check_interval: 5
+  check_val_every_n_epoch: null
+  gradient_clip_val: 1.0
+  limit_val_batches: 2
+  limit_test_batches: 2
+
+module:
+  name: contrastive
+  model_name: resnet50_mixvpr
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  warmup_steps: 2
+  backbone_lr_scale: 0.1
+  val_recall_ks: [1, 5, 10]
+
+datamodule:
+  name: place_recognition
+  train_dataset_name: sf_xl_cosplace
+  sample_by_image: false
+  val_dataset_names:
+    - pitts30k_val
+  test_dataset_names:
+    - pitts30k_test
+  batch_size: 4
+  images_per_place: 4
+  num_workers: 2
+  transform:
+    name: train
+    image_size: 224
+  val_transform:
+    name: eval
+    image_size: 224
+  test_transform:
+    name: eval
+    image_size: 224

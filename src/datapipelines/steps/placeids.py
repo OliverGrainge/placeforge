@@ -112,42 +112,11 @@ def _normalize(embeddings: np.ndarray, device: torch.device) -> torch.Tensor:
 
 
 # ---------------------------------------------------------------------------
-# Step 1 – plain grid assignment
+# Step 1 – grid assignment + coherence filtering via embeddings
 # ---------------------------------------------------------------------------
 
 
-class AssignPlaceIdStep(BaseStep):
-    """Assign place IDs using a flat UTM grid (no embedding filtering)."""
-
-    def __init__(
-        self,
-        cell_size_meters: float,
-        use_heading: bool = False,
-        heading_size_degrees: float = 30.0,
-    ) -> None:
-        super().__init__()
-        self.cell_size_meters = cell_size_meters
-        self.use_heading = use_heading
-        self.heading_size_degrees = heading_size_degrees
-
-    def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["traindataset"]
-        if self.use_heading:
-            _validate_heading(df)
-        df = _assign_place_ids(
-            df,
-            self.cell_size_meters,
-            heading_size_degrees=self.heading_size_degrees if self.use_heading else None,
-        )
-        return {**context, "traindataset": df}
-
-
-# ---------------------------------------------------------------------------
-# Step 2 – grid assignment + coherence filtering via embeddings
-# ---------------------------------------------------------------------------
-
-
-class AssignPlaceIdWithEmbedStep(BaseStep):
+class AssignCuraVPRPlaceIdStep(BaseStep):
     """Assign place IDs on a UTM grid, then remove incoherent images.
 
     Within each place, images are iteratively removed if their mean cosine
@@ -247,7 +216,7 @@ class AssignPlaceIdWithEmbedStep(BaseStep):
 
 
 # ---------------------------------------------------------------------------
-# Step 3 – compass-rose (CoSPlace) grid assignment
+# Step 2 – compass-rose (CoSPlace) grid assignment
 # ---------------------------------------------------------------------------
 
 
@@ -300,7 +269,7 @@ class AssignCosPlacePlaceIdStep(BaseStep):
 
 
 # ---------------------------------------------------------------------------
-# Step 4 – EigenPlaces assignment
+# Step 3 – EigenPlaces assignment
 # ---------------------------------------------------------------------------
 
 
@@ -428,145 +397,3 @@ class AssignEigenPlacesPlaceIdStep(BaseStep):
         return place_counter
 
 
-# ---------------------------------------------------------------------------
-# Step 5 – coherence + diversity filtering on existing place IDs
-# ---------------------------------------------------------------------------
-
-
-class AssignDiversePlaceIdWithEmbedStep(BaseStep):
-    """Remove incoherent then redundant images from each place.
-
-    Runs three sequential phases on every place:
-
-    **Phase 1 – Coherence**
-        Iteratively drop the image with the lowest mean cosine similarity to
-        its neighbours until every survivor is above ``cos_sim_threshold``.
-
-    **Phase 2 – Diversity**
-        Iteratively drop the more redundant member of the most-similar pair
-        until no pair exceeds ``max_pair_similarity``.
-
-    **Phase 3 – Cap** *(optional)*
-        If the place still exceeds ``max_images_per_place``, keep removing
-        the more redundant image of the closest pair.
-
-    Places left with fewer than ``min_images`` survivors are removed entirely.
-
-    Parameters
-    ----------
-    image_embedding_name:
-        Sub-directory name under ``$PLACEFORGE_FEATURE_STORE_DIR/embedding/image/``.
-    cos_sim_threshold:
-        Minimum mean cosine similarity for an image to be retained (Phase 1).
-    max_pair_similarity:
-        Maximum pairwise cosine similarity allowed between any two images (Phase 2).
-    max_images_per_place:
-        Hard cap on images per place.  ``None`` disables the cap (Phase 3).
-    min_images:
-        Places with fewer surviving images than this are discarded entirely.
-    """
-
-    def __init__(
-        self,
-        image_embedding_name: str,
-        cos_sim_threshold: float = 0.3,
-        max_pair_similarity: float = 0.9,
-        max_images_per_place: int | None = None,
-        min_images: int = 2,
-    ) -> None:
-        super().__init__()
-        self.cos_sim_threshold = cos_sim_threshold
-        self.max_pair_similarity = max_pair_similarity
-        self.max_images_per_place = max_images_per_place
-        self.min_images = min_images
-        self.image_cache = _image_cache(image_embedding_name)
-
-    def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["traindataset"].copy()
-        assert (
-            "place_id" in df.columns
-        ), "DiversifyPlacesStep expects place_id to already be assigned."
-
-        image_embs, image_index = _load_image_embeddings(self.image_cache, df)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        groups = _build_groups(df, image_index)
-
-        if self.pbar is not None:
-            self.pbar.reset(total=len(groups))
-
-        keep_mask = np.ones(len(df), dtype=bool)
-
-        for df_indices, image_rows in groups:
-            dropped = self._filter_place(image_embs[image_rows], device)
-            n_surviving = len(image_rows) - len(dropped)
-
-            if n_surviving < self.min_images:
-                for idx in df_indices:
-                    keep_mask[idx] = False
-            else:
-                for local_idx in dropped:
-                    keep_mask[df_indices[local_idx]] = False
-
-            if self.pbar is not None:
-                self.pbar.update(1)
-
-        return {**context, "traindataset": _apply_keep_mask(df, keep_mask)}
-
-    @torch.no_grad()
-    def _filter_place(self, embeds: np.ndarray, device: torch.device) -> set[int]:
-        """Return the set of *local* indices to drop from this place."""
-        n = len(embeds)
-        if n <= 1:
-            return set()
-
-        normed = _normalize(embeds, device)
-        alive = list(range(n))
-        dropped: set[int] = set()
-
-        # Phase 1 – coherence: drop the most dissimilar image iteratively
-        while len(alive) > 1:
-            subset = normed[alive]
-            sim = subset @ subset.T
-            sim.fill_diagonal_(0.0)
-            mean_sim = sim.sum(dim=1) / (len(alive) - 1)
-
-            worst = int(mean_sim.argmin())
-            if mean_sim[worst].item() >= self.cos_sim_threshold:
-                break
-
-            dropped.add(alive[worst])
-            alive.pop(worst)
-
-        # Phase 2 – diversity: drop the more redundant of the closest pair
-        while len(alive) > 1:
-            subset = normed[alive]
-            sim = subset @ subset.T
-            sim.fill_diagonal_(-1.0)
-
-            if sim.max().item() <= self.max_pair_similarity:
-                break
-
-            i, j = divmod(int(sim.argmax()), len(alive))
-            mean_i = sim[i].sum() / (len(alive) - 1)
-            mean_j = sim[j].sum() / (len(alive) - 1)
-            victim = i if mean_i >= mean_j else j
-
-            dropped.add(alive[victim])
-            alive.pop(victim)
-
-        # Phase 3 – hard cap (optional)
-        if self.max_images_per_place is not None:
-            while len(alive) > self.max_images_per_place:
-                subset = normed[alive]
-                sim = subset @ subset.T
-                sim.fill_diagonal_(-1.0)
-
-                i, j = divmod(int(sim.argmax()), len(alive))
-                mean_i = sim[i].sum() / (len(alive) - 1)
-                mean_j = sim[j].sum() / (len(alive) - 1)
-                victim = i if mean_i >= mean_j else j
-
-                dropped.add(alive[victim])
-                alive.pop(victim)
-
-        return dropped

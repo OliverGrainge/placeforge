@@ -1,14 +1,11 @@
 from .readimages import ReadTrainImagesStep, ReadValImagesStep, ReadTestImagesStep
 from .placeids import (
-    AssignPlaceIdStep,
-    AssignPlaceIdWithEmbedStep,
+    AssignCuraVPRPlaceIdStep,
     AssignCosPlacePlaceIdStep,
     AssignEigenPlacesPlaceIdStep,
-    AssignDiversePlaceIdWithEmbedStep,
 )
 from .supergroups import (
-    AssignSuperGroupStep,
-    AssignSuperGroupWithEmbedStep,
+    AssignCuraVPRSuperGroupStep,
     AssignCosPlaceSuperGroupStep,
     AssignEigenPlacesSuperGroupStep,
 )

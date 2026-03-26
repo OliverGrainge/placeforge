@@ -71,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Feature-store name for place embeddings (defaults to dataset_name)",
     )
+    analyse_parser.add_argument(
+        "--sample-by-image",
+        action="store_true",
+        help="Use image-level (classification) dataset instead of place-level (contrastive)",
+    )
     analyse_parser.set_defaults(handler=_handle_analyse)
 
     datapipeline_parser = subparsers.add_parser(
@@ -424,25 +429,38 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from datamodules.datasets import TrainDataset
+    from datamodules.datasets.train import ClassificationTrainDataset
     from datapipelines.steps.util import EmbeddingCache
 
-    ds = TrainDataset(args.dataset_name, images_per_place=args.images_per_place)
+    sample_by_image = getattr(args, "sample_by_image", False)
+
+    if sample_by_image:
+        cls_ds = ClassificationTrainDataset(args.dataset_name)
+        df_all = cls_ds.df.reset_index()
+    else:
+        ds = TrainDataset(args.dataset_name, images_per_place=args.images_per_place)
+        df_all = ds.df.reset_index()
 
     # ── Dataset stats ─────────────────────────────────────────────────────────
+    place_to_sg = df_all.groupby("place_id")["supergroup_id"].first().to_dict()
     sg_counts: dict = {}
-    for place_id in ds.place_ids:
-        sg = ds.place_id_to_supergroup[place_id]
+    for sg in place_to_sg.values():
         sg_counts[sg] = sg_counts.get(sg, 0) + 1
 
-    img_counts = [len(paths) for paths in ds.place_id_to_paths.values()]
+    img_counts = df_all.groupby("place_id").size().tolist()
     places_per_sg = list(sg_counts.values())
+
+    num_places = len(place_to_sg)
+    num_images = len(df_all)
+    num_supergroups = len(sg_counts)
 
     print()
     print("=" * 52)
     print(f"  Dataset: {args.dataset_name}")
-    print(f"    places:           {ds.num_places:,}")
-    print(f"    images:           {ds.num_images:,}")
-    print(f"    supergroups:      {ds.num_supergroups:,}")
+    print(f"    mode:             {'image-level (classification)' if sample_by_image else 'place-level (contrastive)'}")
+    print(f"    places:           {num_places:,}")
+    print(f"    images:           {num_images:,}")
+    print(f"    supergroups:      {num_supergroups:,}")
     print(
         f"    images/place:     avg={sum(img_counts)/len(img_counts):.1f}  "
         f"min={min(img_counts)}  max={max(img_counts)}"
@@ -455,63 +473,106 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     print()
 
     # ── Sample batch figures → analysis/sample_batches/ ──────────────────────
-    out_dir = ds.dataset_dir
+    processed_dir = Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
+    out_dir = processed_dir / "train" / args.dataset_name
     batches_dir = out_dir / "sample_batches"
     batches_dir.mkdir(exist_ok=True)
 
-    num_places = min(args.num_places, ds.num_places)
-    n_cols = args.images_per_place
     n_batches = 10
 
-    sg_to_indices = ds._supergroup_to_indices
-    eligible_sgs = [sg for sg, idxs in sg_to_indices.items() if len(idxs) >= 2]
+    if sample_by_image:
+        # Classification mode: each sample is a single image, batch from same supergroup
+        sg_to_indices = cls_ds._supergroup_to_indices
+        eligible_sgs = [sg for sg, idxs in sg_to_indices.items() if len(idxs) >= 2]
+        batch_size = args.num_places * args.images_per_place  # total images per batch
 
-    for batch_i in tqdm(range(n_batches), desc="Sample batches", unit="batch"):
-        # Mirror the real batching strategy: all places from the same supergroup
-        sg_id = random.choice(eligible_sgs)
-        indices = sg_to_indices[sg_id]
-        sampled_indices = random.sample(indices, min(num_places, len(indices)))
-        n_rows = len(sampled_indices)
+        for batch_i in tqdm(range(n_batches), desc="Sample batches", unit="batch"):
+            sg_id = random.choice(eligible_sgs)
+            indices = sg_to_indices[sg_id]
+            n_sample = min(batch_size, len(indices))
+            sampled_indices = random.sample(indices, n_sample)
 
-        fig, axes = plt.subplots(
-            n_rows,
-            n_cols,
-            figsize=(n_cols * 2.2, n_rows * 2.2),
-            squeeze=False,
-        )
-        fig.subplots_adjust(hspace=0.05, wspace=0.05, left=0.12)
+            n_cols = args.images_per_place
+            n_rows = (n_sample + n_cols - 1) // n_cols
 
-        for row, idx in enumerate(sampled_indices):
-            sample = ds[idx]
-            place_id = sample["place_id"]
-            images = sample["images"]
-            for col in range(n_cols):
+            fig, axes = plt.subplots(
+                n_rows, n_cols,
+                figsize=(n_cols * 2.2, n_rows * 2.2),
+                squeeze=False,
+            )
+            fig.subplots_adjust(hspace=0.05, wspace=0.05, left=0.12)
+
+            for i, idx in enumerate(sampled_indices):
+                sample = cls_ds[idx]
+                row, col = divmod(i, n_cols)
                 ax = axes[row][col]
-                img = images[col]
-                img = img.permute(1, 2, 0).numpy()
+                img = sample["image"].permute(1, 2, 0).numpy()
                 ax.imshow(img)
                 ax.set_xticks([])
                 ax.set_yticks([])
-                if col == 0:
-                    ax.set_ylabel(
-                        f"p{place_id}",
-                        fontsize=6,
-                        rotation=0,
-                        labelpad=28,
-                        va="center",
-                    )
+                ax.set_ylabel(
+                    f"L{sample['local_label']}",
+                    fontsize=6, rotation=0, labelpad=20, va="center",
+                ) if col == 0 else None
 
-        for col in range(n_cols):
-            axes[0][col].set_title(f"img {col + 1}", fontsize=8)
-        fig.suptitle(
-            f"{args.dataset_name} — batch {batch_i + 1}/{n_batches} — supergroup {sg_id} — {n_rows} places × {n_cols} images",
-            fontsize=10,
-            y=1.002,
-        )
+            # Hide any unused axes
+            for i in range(n_sample, n_rows * n_cols):
+                row, col = divmod(i, n_cols)
+                axes[row][col].set_visible(False)
 
-        batch_path = batches_dir / f"batch_{batch_i + 1:02d}.png"
-        fig.savefig(batch_path, dpi=120, bbox_inches="tight")
-        plt.close(fig)
+            fig.suptitle(
+                f"{args.dataset_name} — batch {batch_i + 1}/{n_batches} — supergroup {sg_id} — {n_sample} images (classification)",
+                fontsize=10, y=1.002,
+            )
+            batch_path = batches_dir / f"batch_{batch_i + 1:02d}.png"
+            fig.savefig(batch_path, dpi=120, bbox_inches="tight")
+            plt.close(fig)
+    else:
+        # Contrastive mode: rows = places, cols = images per place
+        num_places_sample = min(args.num_places, num_places)
+        n_cols = args.images_per_place
+
+        sg_to_indices = ds._supergroup_to_indices
+        eligible_sgs = [sg for sg, idxs in sg_to_indices.items() if len(idxs) >= 2]
+
+        for batch_i in tqdm(range(n_batches), desc="Sample batches", unit="batch"):
+            sg_id = random.choice(eligible_sgs)
+            indices = sg_to_indices[sg_id]
+            sampled_indices = random.sample(indices, min(num_places_sample, len(indices)))
+            n_rows = len(sampled_indices)
+
+            fig, axes = plt.subplots(
+                n_rows, n_cols,
+                figsize=(n_cols * 2.2, n_rows * 2.2),
+                squeeze=False,
+            )
+            fig.subplots_adjust(hspace=0.05, wspace=0.05, left=0.12)
+
+            for row, idx in enumerate(sampled_indices):
+                sample = ds[idx]
+                place_id = sample["place_id"]
+                images = sample["images"]
+                for col in range(n_cols):
+                    ax = axes[row][col]
+                    img = images[col].permute(1, 2, 0).numpy()
+                    ax.imshow(img)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    if col == 0:
+                        ax.set_ylabel(
+                            f"p{place_id}",
+                            fontsize=6, rotation=0, labelpad=28, va="center",
+                        )
+
+            for col in range(n_cols):
+                axes[0][col].set_title(f"img {col + 1}", fontsize=8)
+            fig.suptitle(
+                f"{args.dataset_name} — batch {batch_i + 1}/{n_batches} — supergroup {sg_id} — {n_rows} places × {n_cols} images",
+                fontsize=10, y=1.002,
+            )
+            batch_path = batches_dir / f"batch_{batch_i + 1:02d}.png"
+            fig.savefig(batch_path, dpi=120, bbox_inches="tight")
+            plt.close(fig)
     print(f"  Saved {n_batches} sample batches → {batches_dir}/")
 
     # ── Shared helpers ────────────────────────────────────────────────────────
@@ -575,14 +636,14 @@ def _handle_analyse(args: argparse.Namespace) -> int:
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
 
     print(f"  Loading embedding index ({image_embedding_name})...", flush=True, end=" ")
-    df = ds.df.reset_index()
+    df = df_all.copy()
     emb_index = image_cache.load_index().set_index("id")["row"]
     emb_mmap = image_cache.mmap()
     print("done.", flush=True)
 
     print(f"  Joining {len(df):,} images to embedding index...", flush=True, end=" ")
     df = df.join(emb_index.rename("emb_row"), on="image_id", how="inner")
-    missing = len(ds.df) - df["emb_row"].notna().sum()
+    missing = num_images - df["emb_row"].notna().sum()
     if missing:
         print(f"\n  Warning: {missing} images have no embedding — skipping them.")
     df = df.dropna(subset=["emb_row"])
@@ -803,10 +864,10 @@ def _handle_analyse(args: argparse.Namespace) -> int:
     place_index = place_cache.load_index().set_index("id")["row"]
 
     sg_to_places: dict = {}
-    for pid in ds.place_ids:
+    for pid, sg in place_to_sg.items():
         if pid not in place_index:
             continue
-        sg_to_places.setdefault(ds.place_id_to_supergroup[pid], []).append(pid)
+        sg_to_places.setdefault(sg, []).append(pid)
 
     per_sg: list[dict] = []
     sg_pairwise_dists: dict[int, list] = {}

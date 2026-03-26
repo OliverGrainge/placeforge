@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 import pandas as pd
@@ -51,14 +52,24 @@ class ReadTrainImagesStep(BaseStep):
         else:
             self.data_roots = [Path(data_root)]
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
+        self.cache_path = self._build_cache_path()
+
+    def _build_cache_path(self) -> Path:
+        key = "\n".join(sorted(str(r.resolve()) for r in self.data_roots))
+        digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+        cache_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / "cache" / "readimages"
+        return cache_dir / f"{digest}.parquet"
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        if self.cache_path.exists():
+            df = pd.read_parquet(self.cache_path)
+            return {**context, "traindataset": df}
+
         for data_root in self.data_roots:
             if not data_root.exists():
                 raise FileNotFoundError(f"Data root does not exist: {data_root}")
 
         paths = list(self._iter_image_paths())
-        #paths = list(self._iter_image_paths())[:30000] 
         if self.pbar is not None:
             self.pbar.reset(total=len(paths))
 
@@ -76,7 +87,11 @@ class ReadTrainImagesStep(BaseStep):
             )
             if self.pbar is not None:
                 self.pbar.update(1)
-        return {**context, "traindataset": pd.DataFrame(records)}
+
+        df = pd.DataFrame(records)
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(self.cache_path, index=False)
+        return {**context, "traindataset": df}
 
     def _iter_image_paths(self):
         for data_root in self.data_roots:

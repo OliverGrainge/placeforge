@@ -1,29 +1,33 @@
 wandb:
-  project: placeforge_sf_xl_small
-  name: contrastive_curavpr_boq
+  project: placeforge_sf_xl
+  name: classification_eigenplaces_gem
 
 trainer:
-  max_steps: 2000  # use max_steps instead of max_epochs
+  max_steps: 10000  # use max_steps instead of max_epochs
   max_epochs: -1  # disable epoch limit when using max_steps
   accelerator: gpu
   devices: 1
   precision: 16-mixed
   log_every_n_steps: 10
-  val_check_interval: 100
+  val_check_interval: 20000
   check_val_every_n_epoch: null
+  gradient_clip_val: 1.0  # prevent fp16 overflow from CosFace scale amplifying gradients
 
 module:
-  name: contrastive
-  model_name: dinov2_boq
+  name: classification
+  model_name: dinov2_gem
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
+  warmup_steps: 500
+  backbone_lr_scale: 0.1
   val_recall_ks: [1, 5, 10]
-
+  
 datamodule:
   name: place_recognition
-  train_dataset_name: sf_xl_small_curavpr
+  train_dataset_name: sf_xl_eigenplaces
+  sample_by_image: true
   val_dataset_names:
-    - pitts30k_val 
+    - pitts30k_val
   test_dataset_names:
     - pitts30k_test
     - msls_val
@@ -32,7 +36,7 @@ datamodule:
     - svox_test
   batch_size: 128
   images_per_place: 4
-  num_workers: 2
+  num_workers: 8
   transform:
     name: train
     image_size: 224
