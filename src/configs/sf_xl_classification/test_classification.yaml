@@ -1,5 +1,6 @@
+# Smoke-test config: minimal steps, capped val/test batches, small batch size.
 wandb:
-  project: placeforge_sf_xl
+  project: placeforge_classification
   name: test_classification
 
 trainer:
@@ -15,19 +16,23 @@ trainer:
   limit_val_batches: 2
   limit_test_batches: 2
 
+compile: false
+
 module:
   name: classification
-  model_name: resnet50_mixvpr
+  model_name: resnet50_gem
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   warmup_steps: 2
   backbone_lr_scale: 0.1
+  criterion_lr_scale: 10.0
   val_recall_ks: [1, 5, 10]
 
 datamodule:
   name: place_recognition
-  train_dataset_name: sf_xl_cosplace
-  sample_by_image: true
+  train_dataset_name: sf_xl_curavpr_cls
+  dataset_type: classification
+  num_supergroups: null
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

@@ -10,6 +10,9 @@ class ComputeValMatchesStep(BaseStep):
     def __init__(self, radius_meters: int) -> None:
         self.radius_meters = radius_meters
 
+    def cache_params(self) -> dict[str, Any]:
+        return {"radius_meters": self.radius_meters}
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["valdataset"].copy()
 
@@ -41,6 +44,9 @@ class ComputeValMatchesStep(BaseStep):
 class ComputeTestMatchesStep(BaseStep):
     def __init__(self, radius_meters: int) -> None:
         self.radius_meters = radius_meters
+
+    def cache_params(self) -> dict[str, Any]:
+        return {"radius_meters": self.radius_meters}
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["testdataset"].copy()

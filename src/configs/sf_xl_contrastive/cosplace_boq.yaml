@@ -1,5 +1,5 @@
 wandb:
-  project: placeforge_sf_xl
+  project: placeforge_contrastive
   name: contrastive_cosplace_boq
 
 trainer:
@@ -13,6 +13,8 @@ trainer:
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0  # clip gradient norm to stabilise metric learning
 
+compile: true
+
 module:
   name: contrastive
   model_name: dinov2_boq
@@ -25,7 +27,8 @@ module:
 datamodule:
   name: place_recognition
   train_dataset_name: sf_xl_cosplace
-  sample_by_image: false
+  dataset_type: contrastive
+  num_supergroups: null
   val_dataset_names:
     - pitts30k_val 
   test_dataset_names:

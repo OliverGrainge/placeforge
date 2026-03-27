@@ -5,7 +5,6 @@ from datapipelines.base import Pipeline
 from datapipelines.env import raw_dir
 from datapipelines.steps import (
     ReadTrainImagesStep,
-    PrintTrainDataset,
     AssignCuraVPRPlaceIdStep,
     AssignCosPlacePlaceIdStep,
     AssignCuraVPRSuperGroupStep,
@@ -16,6 +15,7 @@ from datapipelines.steps import (
     AssignEigenPlacesSuperGroupStep,
     SaveTrainDataset,
     SummaryTrainDataset,
+    AnalyseTrainDatasetStep,
 )
 
 
@@ -36,6 +36,7 @@ def build_sf_xl_cosplace() -> Pipeline:
             AssignCosPlaceSuperGroupStep(N=5, L=2),
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
         ],
     )
 
@@ -56,6 +57,7 @@ def build_sf_xl_eigenplaces() -> Pipeline:
             AssignEigenPlacesSuperGroupStep(N=3),
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
         ],
     )
 
@@ -78,7 +80,7 @@ def build_sf_xl_curavpr_con() -> Pipeline:
                 cos_sim_threshold=0.4,
                 min_images=4,
             ),
-            PrintTrainDataset(),
+
             AggregatePlaceEmbeddingStep(
                 image_embedding_name="sf_xl",
                 place_embedding_name=name,
@@ -91,9 +93,10 @@ def build_sf_xl_curavpr_con() -> Pipeline:
                 kmeans_max_iter=100,
                 seed=42,
             ),
-            PrintTrainDataset(),
+
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
         ],
     )
 
@@ -116,22 +119,10 @@ def build_sf_xl_curavpr_cls() -> Pipeline:
                 cos_sim_threshold=0.4,
                 min_images=4,
             ),
-            PrintTrainDataset(),
-            AggregatePlaceEmbeddingStep(
-                image_embedding_name="sf_xl",
-                place_embedding_name=name,
-                reduction="mean",
-                normalize=True,
-            ),
-            AssignCuraVPRSuperGroupStep(
-                place_embedding_name=name,
-                supergroup_size=512,
-                kmeans_max_iter=100,
-                seed=42,
-            ),
-            PrintTrainDataset(),
+            AssignCosPlaceSuperGroupStep(N=5, L=2),
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
         ],
     )
 

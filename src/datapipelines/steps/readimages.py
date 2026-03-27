@@ -60,6 +60,9 @@ class ReadTrainImagesStep(BaseStep):
         cache_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"]) / "cache" / "readimages"
         return cache_dir / f"{digest}.parquet"
 
+    def cache_params(self) -> dict[str, Any]:
+        return {"data_roots": sorted(str(r.resolve()) for r in self.data_roots)}
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         if self.cache_path.exists():
             df = pd.read_parquet(self.cache_path)
@@ -105,6 +108,12 @@ class ReadValImagesStep(BaseStep):
         self.query_path = self.raw_dir / query_path
         self.database_path = self.raw_dir / database_path
 
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "query_path": str(self.query_path),
+            "database_path": str(self.database_path),
+        }
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         for path in (self.query_path, self.database_path):
             if not path.exists():
@@ -145,6 +154,12 @@ class ReadTestImagesStep(BaseStep):
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
         self.query_path = self.raw_dir / query_path
         self.database_path = self.raw_dir / database_path
+
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "query_path": str(self.query_path),
+            "database_path": str(self.database_path),
+        }
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         for path in (self.query_path, self.database_path):

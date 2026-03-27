@@ -1,5 +1,6 @@
+# Smoke-test config: minimal steps, capped val/test batches, small batch size.
 wandb:
-  project: placeforge_sf_xl
+  project: placeforge_contrastive
   name: test_contrastive
 
 trainer:
@@ -15,6 +16,8 @@ trainer:
   limit_val_batches: 2
   limit_test_batches: 2
 
+compile: true
+
 module:
   name: contrastive
   model_name: resnet50_mixvpr
@@ -26,8 +29,9 @@ module:
 
 datamodule:
   name: place_recognition
-  train_dataset_name: sf_xl_cosplace
-  sample_by_image: false
+  train_dataset_name: sf_xl_curavpr_con
+  dataset_type: contrastive
+  num_supergroups: null
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

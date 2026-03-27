@@ -44,40 +44,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     test_parser.set_defaults(handler=_handle_test)
 
-    analyse_parser = subparsers.add_parser(
-        "analyse",
-        help="Analyse a training dataset: sample figure + intra-class variation",
-    )
-    analyse_parser.add_argument("dataset_name", help="Name of the training dataset")
-    analyse_parser.add_argument(
-        "--num-places",
-        type=int,
-        default=16,
-        help="Number of places to sample (default: 16)",
-    )
-    analyse_parser.add_argument(
-        "--images-per-place",
-        type=int,
-        default=4,
-        help="Images per place to show (default: 4)",
-    )
-    analyse_parser.add_argument(
-        "--image-embedding-name",
-        default=None,
-        help="Feature-store name for image embeddings (defaults to dataset_name)",
-    )
-    analyse_parser.add_argument(
-        "--place-embedding-name",
-        default=None,
-        help="Feature-store name for place embeddings (defaults to dataset_name)",
-    )
-    analyse_parser.add_argument(
-        "--sample-by-image",
-        action="store_true",
-        help="Use image-level (classification) dataset instead of place-level (contrastive)",
-    )
-    analyse_parser.set_defaults(handler=_handle_analyse)
-
     datapipeline_parser = subparsers.add_parser(
         "datapipeline",
         help="Run a registered data pipeline",
@@ -103,6 +69,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filter pipelines by category (train, val, or test)",
     )
     datapipeline_parser.set_defaults(handler=_handle_datapipeline)
+
+    dataloader_parser = subparsers.add_parser(
+        "dataloader",
+        help="Visualise sample batches and measure dataloader throughput",
+    )
+    dataloader_parser.add_argument("config", type=Path, help="Path to a YAML config file")
+    dataloader_parser.add_argument(
+        "--num-batches",
+        type=int,
+        default=50,
+        help="Number of batches to iterate for throughput measurement (default: 50)",
+    )
+    dataloader_parser.add_argument(
+        "--save-batches",
+        type=int,
+        default=3,
+        help="Number of batches to save as figures (default: 3)",
+    )
+    dataloader_parser.set_defaults(handler=_handle_dataloader)
 
     compare_parser = subparsers.add_parser(
         "compare",
@@ -174,16 +159,15 @@ def _handle_train(args: argparse.Namespace) -> int:
     torch.set_float32_matmul_precision("high")
 
     from datamodules import get_datamodule
-    from modules import get_module, get_transform
+    from modules import get_module
 
     config = yaml.safe_load(args.config.read_text())
 
     trainer_kwargs: dict[str, Any] = config.get("trainer", {})
     module_kwargs: dict[str, Any] = config.get("module", {})
-    datamodule_kwargs: dict[str, Any] = config.get("datamodule", {})
 
     module_name = module_kwargs.pop("name")
-    datamodule_name = datamodule_kwargs.pop("name")
+    datamodule_name, datamodule_kwargs = _parse_datamodule_kwargs(config)
 
     trainer_kwargs.setdefault("default_root_dir", str(_LOGS_DIR))
 
@@ -193,31 +177,6 @@ def _handle_train(args: argparse.Namespace) -> int:
 
         wandb_kwargs.setdefault("save_dir", str(_LOGS_DIR))
         trainer_kwargs["logger"] = WandbLogger(**wandb_kwargs)
-
-    transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop("transform", None)
-    if transform_kwargs is not None:
-        transform_name = transform_kwargs.pop("name")
-        datamodule_kwargs["train_transform"] = get_transform(
-            transform_name, **transform_kwargs
-        )
-
-    val_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(
-        "val_transform", None
-    )
-    if val_transform_kwargs is not None:
-        val_transform_name = val_transform_kwargs.pop("name")
-        datamodule_kwargs["val_transform"] = get_transform(
-            val_transform_name, **val_transform_kwargs
-        )
-
-    test_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(
-        "test_transform", None
-    )
-    if test_transform_kwargs is not None:
-        test_transform_name = test_transform_kwargs.pop("name")
-        datamodule_kwargs["test_transform"] = get_transform(
-            test_transform_name, **test_transform_kwargs
-        )
 
     from pytorch_lightning.callbacks import ModelCheckpoint
 
@@ -246,6 +205,9 @@ def _handle_train(args: argparse.Namespace) -> int:
     trainer_kwargs["callbacks"] = callbacks
 
     module = get_module(module_name, **module_kwargs)
+    if config.get("compile", False):
+        compile_kwargs = config["compile"] if isinstance(config["compile"], dict) else {}
+        module = torch.compile(module, **compile_kwargs)
     datamodule = get_datamodule(datamodule_name, **datamodule_kwargs)
 
     datamodule.setup("fit")
@@ -286,7 +248,7 @@ def _handle_test(args: argparse.Namespace) -> int:
     torch.set_float32_matmul_precision("high")
 
     from datamodules import get_datamodule
-    from modules import get_module, get_transform
+    from modules import get_module
 
     # Resolve checkpoint file and config
     path_arg = args.path.resolve()
@@ -324,38 +286,12 @@ def _handle_test(args: argparse.Namespace) -> int:
 
     trainer_kwargs: dict[str, Any] = config.get("trainer", {})
     module_kwargs: dict[str, Any] = config.get("module", {})
-    datamodule_kwargs: dict[str, Any] = config.get("datamodule", {})
 
     module_name = module_kwargs.pop("name")
-    datamodule_name = datamodule_kwargs.pop("name")
+    datamodule_name, datamodule_kwargs = _parse_datamodule_kwargs(config)
 
     trainer_kwargs.setdefault("default_root_dir", str(_LOGS_DIR))
     trainer_kwargs.pop("callbacks", None)
-
-    transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop("transform", None)
-    if transform_kwargs is not None:
-        transform_name = transform_kwargs.pop("name")
-        datamodule_kwargs["train_transform"] = get_transform(
-            transform_name, **transform_kwargs
-        )
-
-    val_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(
-        "val_transform", None
-    )
-    if val_transform_kwargs is not None:
-        val_transform_name = val_transform_kwargs.pop("name")
-        datamodule_kwargs["val_transform"] = get_transform(
-            val_transform_name, **val_transform_kwargs
-        )
-
-    test_transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(
-        "test_transform", None
-    )
-    if test_transform_kwargs is not None:
-        test_transform_name = test_transform_kwargs.pop("name")
-        datamodule_kwargs["test_transform"] = get_transform(
-            test_transform_name, **test_transform_kwargs
-        )
 
     module = get_module(module_name, **module_kwargs)
     datamodule = get_datamodule(datamodule_name, **datamodule_kwargs)
@@ -398,7 +334,7 @@ def _print_dataset_summary(datamodule: Any) -> None:
     print(f"    images:      {num_images:,}")
     print(f"    supergroups: {num_supergroups:,}")
     print(f"    places/sg:   {sg_mean:.1f}  (min {sg_min}  max {sg_max})")
-    if datamodule.sample_by_image:
+    if datamodule.dataset_type == "classification":
         print(f"    batch size:  {datamodule.batch_size:,}  (image-level)")
     else:
         images_per_place = train_ds.images_per_place
@@ -416,613 +352,141 @@ def _print_dataset_summary(datamodule: Any) -> None:
     print()
 
 
-def _handle_analyse(args: argparse.Namespace) -> int:
-    import json
+def _parse_datamodule_kwargs(config: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Extract datamodule name and kwargs from a loaded YAML config.
+
+    Resolves nested transform configs into instantiated transform objects.
+    Returns (datamodule_name, datamodule_kwargs).
+    """
+    from modules import get_transform
+
+    datamodule_kwargs: dict[str, Any] = config.get("datamodule", {})
+    datamodule_name = datamodule_kwargs.pop("name")
+
+    for config_key, kwarg_key in [
+        ("transform", "train_transform"),
+        ("val_transform", "val_transform"),
+        ("test_transform", "test_transform"),
+    ]:
+        transform_kwargs: dict[str, Any] | None = datamodule_kwargs.pop(config_key, None)
+        if transform_kwargs is not None:
+            transform_name = transform_kwargs.pop("name")
+            datamodule_kwargs[kwarg_key] = get_transform(transform_name, **transform_kwargs)
+
+    return datamodule_name, datamodule_kwargs
+
+
+def _handle_dataloader(args: argparse.Namespace) -> int:
     import os
-    import random
-    import numpy as np
-    import pandas as pd
+    import time
+
     import torch
-    from tqdm import tqdm
-    import matplotlib
+    import numpy as np
 
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from datamodules.datasets import TrainDataset
-    from datamodules.datasets.train import ClassificationTrainDataset
-    from datapipelines.steps.util import EmbeddingCache
+    torch.set_float32_matmul_precision("high")
 
-    sample_by_image = getattr(args, "sample_by_image", False)
+    from datamodules import get_datamodule
 
-    if sample_by_image:
-        cls_ds = ClassificationTrainDataset(args.dataset_name)
-        df_all = cls_ds.df.reset_index()
-    else:
-        ds = TrainDataset(args.dataset_name, images_per_place=args.images_per_place)
-        df_all = ds.df.reset_index()
+    config = yaml.safe_load(args.config.read_text())
+    datamodule_name, datamodule_kwargs = _parse_datamodule_kwargs(config)
 
-    # ── Dataset stats ─────────────────────────────────────────────────────────
-    place_to_sg = df_all.groupby("place_id")["supergroup_id"].first().to_dict()
-    sg_counts: dict = {}
-    for sg in place_to_sg.values():
-        sg_counts[sg] = sg_counts.get(sg, 0) + 1
+    datamodule = get_datamodule(datamodule_name, **datamodule_kwargs)
+    datamodule.setup("fit")
 
-    img_counts = df_all.groupby("place_id").size().tolist()
-    places_per_sg = list(sg_counts.values())
+    _print_dataset_summary(datamodule)
 
-    num_places = len(place_to_sg)
-    num_images = len(df_all)
-    num_supergroups = len(sg_counts)
+    loader = datamodule.train_dataloader()
 
-    print()
-    print("=" * 52)
-    print(f"  Dataset: {args.dataset_name}")
-    print(f"    mode:             {'image-level (classification)' if sample_by_image else 'place-level (contrastive)'}")
-    print(f"    places:           {num_places:,}")
-    print(f"    images:           {num_images:,}")
-    print(f"    supergroups:      {num_supergroups:,}")
-    print(
-        f"    images/place:     avg={sum(img_counts)/len(img_counts):.1f}  "
-        f"min={min(img_counts)}  max={max(img_counts)}"
+    # ── Save sample batch figures ────────────────────────────────────────────
+    output_dir = (
+        Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
+        / "train"
+        / datamodule.train_dataset_name
+        / "dataloader_samples"
     )
-    print(
-        f"    places/supergroup avg={sum(places_per_sg)/len(places_per_sg):.1f}  "
-        f"min={min(places_per_sg)}  max={max(places_per_sg)}"
-    )
-    print("=" * 52)
-    print()
+    if args.save_batches > 0:
+        import matplotlib
 
-    # ── Sample batch figures → analysis/sample_batches/ ──────────────────────
-    processed_dir = Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
-    out_dir = processed_dir / "train" / args.dataset_name
-    batches_dir = out_dir / "sample_batches"
-    batches_dir.mkdir(exist_ok=True)
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
 
-    n_batches = 10
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    if sample_by_image:
-        # Classification mode: each sample is a single image, batch from same supergroup
-        sg_to_indices = cls_ds._supergroup_to_indices
-        eligible_sgs = [sg for sg, idxs in sg_to_indices.items() if len(idxs) >= 2]
-        batch_size = args.num_places * args.images_per_place  # total images per batch
+        # ImageNet denorm constants
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
-        for batch_i in tqdm(range(n_batches), desc="Sample batches", unit="batch"):
-            sg_id = random.choice(eligible_sgs)
-            indices = sg_to_indices[sg_id]
-            n_sample = min(batch_size, len(indices))
-            sampled_indices = random.sample(indices, n_sample)
+        loader_iter = iter(loader)
+        for batch_idx in range(args.save_batches):
+            try:
+                batch = next(loader_iter)
+            except StopIteration:
+                break
 
-            n_cols = args.images_per_place
-            n_rows = (n_sample + n_cols - 1) // n_cols
+            images = batch["images"]  # (B, C, H, W)
+            place_ids = batch["place_ids"]  # (B,)
+            sg_id = batch["supergroup_id"].item()
+
+            n_images = images.shape[0]
+            n_cols = min(n_images, 8)
+            n_rows = (n_images + n_cols - 1) // n_cols
 
             fig, axes = plt.subplots(
                 n_rows, n_cols,
-                figsize=(n_cols * 2.2, n_rows * 2.2),
+                figsize=(n_cols * 2.5, n_rows * 2.5),
                 squeeze=False,
             )
-            fig.subplots_adjust(hspace=0.05, wspace=0.05, left=0.12)
 
-            for i, idx in enumerate(sampled_indices):
-                sample = cls_ds[idx]
+            for i in range(n_images):
                 row, col = divmod(i, n_cols)
                 ax = axes[row][col]
-                img = sample["image"].permute(1, 2, 0).numpy()
+                img = images[i] * std + mean
+                img = img.clamp(0, 1).permute(1, 2, 0).numpy()
                 ax.imshow(img)
+                ax.set_title(f"pid={place_ids[i].item()}", fontsize=7)
                 ax.set_xticks([])
                 ax.set_yticks([])
-                ax.set_ylabel(
-                    f"L{sample['local_label']}",
-                    fontsize=6, rotation=0, labelpad=20, va="center",
-                ) if col == 0 else None
 
-            # Hide any unused axes
-            for i in range(n_sample, n_rows * n_cols):
+            for i in range(n_images, n_rows * n_cols):
                 row, col = divmod(i, n_cols)
                 axes[row][col].set_visible(False)
 
             fig.suptitle(
-                f"{args.dataset_name} — batch {batch_i + 1}/{n_batches} — supergroup {sg_id} — {n_sample} images (classification)",
-                fontsize=10, y=1.002,
+                f"batch {batch_idx}  |  supergroup {sg_id}  |  {n_images} images",
+                fontsize=10,
             )
-            batch_path = batches_dir / f"batch_{batch_i + 1:02d}.png"
-            fig.savefig(batch_path, dpi=120, bbox_inches="tight")
+            fig.tight_layout()
+            fig.savefig(output_dir / f"batch_{batch_idx}.png", dpi=100, bbox_inches="tight")
             plt.close(fig)
-    else:
-        # Contrastive mode: rows = places, cols = images per place
-        num_places_sample = min(args.num_places, num_places)
-        n_cols = args.images_per_place
 
-        sg_to_indices = ds._supergroup_to_indices
-        eligible_sgs = [sg for sg, idxs in sg_to_indices.items() if len(idxs) >= 2]
+        print(f"Saved {min(args.save_batches, batch_idx + 1)} batch figures to {output_dir}")
 
-        for batch_i in tqdm(range(n_batches), desc="Sample batches", unit="batch"):
-            sg_id = random.choice(eligible_sgs)
-            indices = sg_to_indices[sg_id]
-            sampled_indices = random.sample(indices, min(num_places_sample, len(indices)))
-            n_rows = len(sampled_indices)
+    # ── Measure throughput ───────────────────────────────────────────────────
+    from tqdm import tqdm
 
-            fig, axes = plt.subplots(
-                n_rows, n_cols,
-                figsize=(n_cols * 2.2, n_rows * 2.2),
-                squeeze=False,
-            )
-            fig.subplots_adjust(hspace=0.05, wspace=0.05, left=0.12)
-
-            for row, idx in enumerate(sampled_indices):
-                sample = ds[idx]
-                place_id = sample["place_id"]
-                images = sample["images"]
-                for col in range(n_cols):
-                    ax = axes[row][col]
-                    img = images[col].permute(1, 2, 0).numpy()
-                    ax.imshow(img)
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-                    if col == 0:
-                        ax.set_ylabel(
-                            f"p{place_id}",
-                            fontsize=6, rotation=0, labelpad=28, va="center",
-                        )
-
-            for col in range(n_cols):
-                axes[0][col].set_title(f"img {col + 1}", fontsize=8)
-            fig.suptitle(
-                f"{args.dataset_name} — batch {batch_i + 1}/{n_batches} — supergroup {sg_id} — {n_rows} places × {n_cols} images",
-                fontsize=10, y=1.002,
-            )
-            batch_path = batches_dir / f"batch_{batch_i + 1:02d}.png"
-            fig.savefig(batch_path, dpi=120, bbox_inches="tight")
-            plt.close(fig)
-    print(f"  Saved {n_batches} sample batches → {batches_dir}/")
-
-    # ── Shared helpers ────────────────────────────────────────────────────────
-    image_embedding_name = args.image_embedding_name or args.dataset_name
-    place_embedding_name = args.place_embedding_name or args.dataset_name
-    feature_store_dir = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
-
-    def _summary(series: pd.Series) -> dict:
-        return {
-            "mean": float(series.mean()),
-            "median": float(series.median()),
-            "std": float(series.std()),
-            "p5": float(series.quantile(0.05)),
-            "p25": float(series.quantile(0.25)),
-            "p75": float(series.quantile(0.75)),
-            "p95": float(series.quantile(0.95)),
-            "min": float(series.min()),
-            "max": float(series.max()),
-        }
-
-    def _hist(ax, data, title, xlabel, ylabel, color):
-        ax.hist(
-            data, bins=min(60, len(data)), color=color, edgecolor="none", alpha=0.85
+    loader_iter = iter(loader)
+    total_images = 0
+    pbar = tqdm(range(args.num_batches), desc="Throughput", unit="batch")
+    t_start = time.perf_counter()
+    for i in pbar:
+        try:
+            batch = next(loader_iter)
+        except StopIteration:
+            break
+        total_images += batch["images"].shape[0]
+        elapsed = time.perf_counter() - t_start
+        pbar.set_postfix_str(
+            f"{total_images / elapsed:.0f} img/s, "
+            f"{elapsed / (i + 1) * 1000:.1f} ms/batch"
         )
-        ax.axvline(
-            data.mean(),
-            color="black",
-            linestyle="--",
-            linewidth=1.0,
-            label=f"mean={data.mean():.3f}",
-        )
-        ax.axvline(
-            data.median(),
-            color="grey",
-            linestyle=":",
-            linewidth=1.0,
-            label=f"median={data.median():.3f}",
-        )
-        ax.set_title(title, fontsize=10)
-        ax.set_xlabel(xlabel, fontsize=8)
-        ax.set_ylabel(ylabel, fontsize=8)
-        ax.legend(fontsize=7)
-        ax.tick_params(labelsize=7)
+    elapsed = time.perf_counter() - t_start
+    batches_done = i + 1
+    pbar.close()
 
-    image_cache = EmbeddingCache(
-        feature_store_dir / "embedding" / "image" / image_embedding_name
-    )
-
-    if not image_cache.exists:
-        print(
-            f"\n  Skipping variation analysis: embeddings not found at {image_cache.cache_dir}"
-        )
-        print(
-            f"  Run the datapipeline with ComputeEmbeddingStep, or pass --image-embedding-name.\n"
-        )
-        return 0
-
-    # ── Intra-class variation ─────────────────────────────────────────────────
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type == "cuda":
-        print(f"  GPU: {torch.cuda.get_device_name(0)}")
-
-    print(f"  Loading embedding index ({image_embedding_name})...", flush=True, end=" ")
-    df = df_all.copy()
-    emb_index = image_cache.load_index().set_index("id")["row"]
-    emb_mmap = image_cache.mmap()
-    print("done.", flush=True)
-
-    print(f"  Joining {len(df):,} images to embedding index...", flush=True, end=" ")
-    df = df.join(emb_index.rename("emb_row"), on="image_id", how="inner")
-    missing = num_images - df["emb_row"].notna().sum()
-    if missing:
-        print(f"\n  Warning: {missing} images have no embedding — skipping them.")
-    df = df.dropna(subset=["emb_row"])
-    df["emb_row"] = df["emb_row"].astype(int)
-    df = df.reset_index(drop=True)
-    print("done.", flush=True)
-
-    D = emb_mmap.shape[1]
-
-    # Collect place groups, sorted by size for efficient padding
-    place_groups: list[tuple] = []
-    skipped_single = 0
-    for place_id, group in df.groupby("place_id"):
-        n = len(group)
-        if n < 2:
-            skipped_single += 1
-            continue
-        place_groups.append((
-            int(place_id),
-            int(group["supergroup_id"].iloc[0]),
-            group["emb_row"].values,  # mmap row indices
-        ))
-    place_groups.sort(key=lambda x: len(x[2]))
-
-    per_place: list[dict] = []
-    INTRA_BATCH = 64
-
-    for batch_start in tqdm(
-        range(0, len(place_groups), INTRA_BATCH),
-        desc="Intra-class distances",
-        unit="batch",
-        total=(len(place_groups) + INTRA_BATCH - 1) // INTRA_BATCH,
-    ):
-        batch = place_groups[batch_start : batch_start + INTRA_BATCH]
-        B = len(batch)
-        max_n = len(batch[-1][2])  # sorted by size, last is largest
-
-        # Load this batch's embeddings with sorted mmap access
-        all_batch_rows = np.concatenate([rows for _, _, rows in batch])
-        sort_idx = np.argsort(all_batch_rows)
-        unsort = np.empty_like(sort_idx)
-        unsort[sort_idx] = np.arange(len(sort_idx))
-        batch_vecs = torch.from_numpy(
-            emb_mmap[all_batch_rows[sort_idx]].astype(np.float32)
-        )[unsort]
-
-        padded = torch.zeros(B, max_n, D, device=device)
-        ns = []
-        offset = 0
-        for j, (_, _, rows) in enumerate(batch):
-            n = len(rows)
-            ns.append(n)
-            v = batch_vecs[offset : offset + n].to(device)
-            v = v / v.norm(dim=1, keepdim=True).clamp(min=1e-8)
-            padded[j, :n] = v
-            offset += n
-
-        dist_mat = (1.0 - torch.bmm(padded, padded.transpose(1, 2))).cpu().numpy()
-
-        for j, (place_id, sg_id, _) in enumerate(batch):
-            n = ns[j]
-            triu_i, triu_j = np.triu_indices(n, k=1)
-            pairwise_dist = dist_mat[j, triu_i, triu_j]
-            per_place.append(
-                {
-                    "place_id": place_id,
-                    "supergroup_id": sg_id,
-                    "n_images": n,
-                    "mean_cos_dist": float(pairwise_dist.mean()),
-                    "max_cos_dist": float(pairwise_dist.max()),
-                    "min_cos_dist": float(pairwise_dist.min()),
-                    "std_cos_dist": float(pairwise_dist.std()),
-                }
-            )
-
-    if skipped_single:
-        print(f"  Skipped {skipped_single} single-image places.")
-
-    place_df = pd.DataFrame(per_place)
-    intra_summary = {
-        "dataset": args.dataset_name,
-        "image_embedding_name": image_embedding_name,
-        "n_places_analysed": len(place_df),
-        "n_places_skipped_single_image": skipped_single,
-        "mean_cos_dist": _summary(place_df["mean_cos_dist"]),
-        "max_cos_dist": _summary(place_df["max_cos_dist"]),
-        "min_cos_dist": _summary(place_df["min_cos_dist"]),
-        "std_cos_dist": _summary(place_df["std_cos_dist"]),
-    }
-
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
-    fig.suptitle(
-        f"Intra-class variation — {args.dataset_name} ({len(place_df):,} places)",
-        fontsize=12,
-    )
-    _hist(
-        axes[0, 0],
-        place_df["mean_cos_dist"],
-        "Mean cosine distance",
-        "mean pairwise cos-dist",
-        "# places",
-        "#4C72B0",
-    )
-    _hist(
-        axes[0, 1],
-        place_df["max_cos_dist"],
-        "Max cosine distance",
-        "max pairwise cos-dist",
-        "# places",
-        "#C44E52",
-    )
-    _hist(
-        axes[0, 2],
-        place_df["min_cos_dist"],
-        "Min cosine distance",
-        "min pairwise cos-dist",
-        "# places",
-        "#55A868",
-    )
-    _hist(
-        axes[1, 0],
-        place_df["std_cos_dist"],
-        "Std cosine distance",
-        "std pairwise cos-dist",
-        "# places",
-        "#8172B2",
-    )
-    sorted_vals = np.sort(place_df["mean_cos_dist"].values)
-    axes[1, 1].plot(
-        sorted_vals,
-        np.arange(1, len(sorted_vals) + 1) / len(sorted_vals),
-        color="#4C72B0",
-        linewidth=1.5,
-    )
-    axes[1, 1].set_title("CDF — mean cosine distance", fontsize=10)
-    axes[1, 1].set_xlabel("mean pairwise cos-dist", fontsize=8)
-    axes[1, 1].set_ylabel("cumulative fraction", fontsize=8)
-    axes[1, 1].tick_params(labelsize=7)
-    axes[1, 1].grid(True, alpha=0.3)
-    axes[1, 2].scatter(
-        place_df["n_images"],
-        place_df["mean_cos_dist"],
-        alpha=0.3,
-        s=4,
-        color="#4C72B0",
-        rasterized=True,
-    )
-    axes[1, 2].set_title("# images vs mean variation", fontsize=10)
-    axes[1, 2].set_xlabel("images per place", fontsize=8)
-    axes[1, 2].set_ylabel("mean cosine distance", fontsize=8)
-    axes[1, 2].tick_params(labelsize=7)
-    fig.tight_layout()
-    fig.savefig(out_dir / "intra_distributions.png", dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved intra distributions → {out_dir / 'intra_distributions.png'}")
-
-    n_sg = place_df["supergroup_id"].nunique()
-    if n_sg <= 128:
-        sg_groups = (
-            place_df.groupby("supergroup_id")["mean_cos_dist"].apply(list).sort_index()
-        )
-        fig2, ax2 = plt.subplots(figsize=(max(8, n_sg * 0.35), 5))
-        ax2.boxplot(
-            sg_groups.values,
-            tick_labels=[str(s) for s in sg_groups.index],
-            patch_artist=True,
-            medianprops={"color": "black", "linewidth": 1.5},
-            boxprops={"facecolor": "#4C72B0", "alpha": 0.6},
-            flierprops={"marker": ".", "markersize": 2, "alpha": 0.4},
-            whiskerprops={"linewidth": 0.8},
-            capprops={"linewidth": 0.8},
-        )
-        ax2.set_title(
-            f"Intra-class cosine distance by supergroup — {args.dataset_name}",
-            fontsize=10,
-        )
-        ax2.set_xlabel("supergroup_id", fontsize=8)
-        ax2.set_ylabel("mean cosine distance", fontsize=8)
-        ax2.tick_params(axis="x", labelsize=6, rotation=90)
-        ax2.tick_params(axis="y", labelsize=7)
-        ax2.grid(axis="y", alpha=0.3)
-        fig2.tight_layout()
-        fig2.savefig(out_dir / "intra_by_supergroup.png", dpi=120, bbox_inches="tight")
-        plt.close(fig2)
-        print(f"  Saved intra supergroup plot → {out_dir / 'intra_by_supergroup.png'}")
-
-    s = intra_summary["mean_cos_dist"]
-    print()
-    print("=" * 52)
-    print(f"  Intra-class variation ({args.dataset_name})")
-    print(f"    places:  {len(place_df):,}   embedding: {image_embedding_name}")
-    print(f"    mean cos-dist:  mean={s['mean']:.4f}  std={s['std']:.4f}")
-    print(f"                    max={s['max']:.4f}  median={s['median']:.4f}")
-    print(f"                    p5={s['p5']:.4f}   p95={s['p95']:.4f}")
-    print("=" * 52)
-    print()
-
-    # ── Inter-class variation ─────────────────────────────────────────────────
-    place_cache = EmbeddingCache(
-        feature_store_dir / "embedding" / "place" / place_embedding_name
-    )
-
-    if not place_cache.npy_path.exists():
-        print(
-            f"  Skipping inter-class analysis: place embeddings not found at {place_cache.cache_dir}\n"
-        )
-        # Still write the combined stats with only intra
-        with open(out_dir / "stats.json", "w") as f:
-            json.dump(
-                {"intra": {"summary": intra_summary, "per_place": per_place}},
-                f,
-                indent=2,
-            )
-        print(f"  Saved stats → {out_dir / 'stats.json'}")
-        return 0
-
-    place_emb_mmap = place_cache.mmap()
-    place_index = place_cache.load_index().set_index("id")["row"]
-
-    sg_to_places: dict = {}
-    for pid, sg in place_to_sg.items():
-        if pid not in place_index:
-            continue
-        sg_to_places.setdefault(sg, []).append(pid)
-
-    per_sg: list[dict] = []
-    sg_pairwise_dists: dict[int, list] = {}
-    skipped_single_sg = 0
-
-    for sg_id, place_ids in tqdm(
-        sg_to_places.items(), desc="Inter-class distances", unit="supergroup"
-    ):
-        n = len(place_ids)
-        if n < 2:
-            skipped_single_sg += 1
-            continue
-        rows = place_index.loc[place_ids].values
-        vecs = torch.from_numpy(place_emb_mmap[rows].astype(np.float32)).to(device)
-        vecs = vecs / vecs.norm(dim=1, keepdim=True).clamp(min=1e-8)
-        triu_i, triu_j = torch.triu_indices(n, n, offset=1, device=device)
-        pairwise_dist = (1.0 - vecs @ vecs.T)[triu_i, triu_j].cpu().numpy()
-        sg_pairwise_dists[int(sg_id)] = pairwise_dist.tolist()
-        per_sg.append(
-            {
-                "supergroup_id": int(sg_id),
-                "n_places": int(n),
-                "mean_cos_dist": float(pairwise_dist.mean()),
-                "max_cos_dist": float(pairwise_dist.max()),
-                "min_cos_dist": float(pairwise_dist.min()),
-                "std_cos_dist": float(pairwise_dist.std()),
-            }
-        )
-
-    if skipped_single_sg:
-        print(f"  Skipped {skipped_single_sg} single-place supergroups.")
-
-    sg_df = pd.DataFrame(per_sg)
-    inter_summary = {
-        "dataset": args.dataset_name,
-        "place_embedding_name": place_embedding_name,
-        "n_supergroups_analysed": len(sg_df),
-        "n_supergroups_skipped_single_place": skipped_single_sg,
-        "mean_cos_dist": _summary(sg_df["mean_cos_dist"]),
-        "max_cos_dist": _summary(sg_df["max_cos_dist"]),
-        "min_cos_dist": _summary(sg_df["min_cos_dist"]),
-        "std_cos_dist": _summary(sg_df["std_cos_dist"]),
-    }
-
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
-    fig.suptitle(
-        f"Inter-class variation — {args.dataset_name} ({len(sg_df):,} supergroups)",
-        fontsize=12,
-    )
-    _hist(
-        axes[0, 0],
-        sg_df["mean_cos_dist"],
-        "Mean inter-class cosine distance",
-        "mean pairwise cos-dist",
-        "# supergroups",
-        "#4C72B0",
-    )
-    _hist(
-        axes[0, 1],
-        sg_df["max_cos_dist"],
-        "Max cosine distance (most separable)",
-        "max pairwise cos-dist",
-        "# supergroups",
-        "#C44E52",
-    )
-    _hist(
-        axes[0, 2],
-        sg_df["min_cos_dist"],
-        "Min cosine distance (most confusable)",
-        "min pairwise cos-dist",
-        "# supergroups",
-        "#55A868",
-    )
-    _hist(
-        axes[1, 0],
-        sg_df["std_cos_dist"],
-        "Std cosine distance",
-        "std pairwise cos-dist",
-        "# supergroups",
-        "#8172B2",
-    )
-    sorted_vals = np.sort(sg_df["mean_cos_dist"].values)
-    axes[1, 1].plot(
-        sorted_vals,
-        np.arange(1, len(sorted_vals) + 1) / len(sorted_vals),
-        color="#4C72B0",
-        linewidth=1.5,
-    )
-    axes[1, 1].set_title("CDF — mean inter-class cosine distance", fontsize=10)
-    axes[1, 1].set_xlabel("mean pairwise cos-dist", fontsize=8)
-    axes[1, 1].set_ylabel("cumulative fraction", fontsize=8)
-    axes[1, 1].tick_params(labelsize=7)
-    axes[1, 1].grid(True, alpha=0.3)
-    axes[1, 2].scatter(
-        sg_df["n_places"], sg_df["mean_cos_dist"], alpha=0.5, s=12, color="#4C72B0"
-    )
-    axes[1, 2].set_title("# places vs mean separation", fontsize=10)
-    axes[1, 2].set_xlabel("places per supergroup", fontsize=8)
-    axes[1, 2].set_ylabel("mean cosine distance", fontsize=8)
-    axes[1, 2].tick_params(labelsize=7)
-    fig.tight_layout()
-    fig.savefig(out_dir / "inter_distributions.png", dpi=120, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved inter distributions → {out_dir / 'inter_distributions.png'}")
-
-    n_sg = len(sg_pairwise_dists)
-    if n_sg <= 128:
-        sorted_sg = sorted(sg_pairwise_dists.keys())
-        fig3, ax3 = plt.subplots(figsize=(max(8, n_sg * 0.35), 5))
-        ax3.boxplot(
-            [sg_pairwise_dists[s] for s in sorted_sg],
-            tick_labels=[str(s) for s in sorted_sg],
-            patch_artist=True,
-            medianprops={"color": "black", "linewidth": 1.5},
-            boxprops={"facecolor": "#C44E52", "alpha": 0.6},
-            flierprops={"marker": ".", "markersize": 2, "alpha": 0.4},
-            whiskerprops={"linewidth": 0.8},
-            capprops={"linewidth": 0.8},
-        )
-        ax3.set_title(
-            f"Inter-class cosine distance by supergroup — {args.dataset_name}",
-            fontsize=10,
-        )
-        ax3.set_xlabel("supergroup_id", fontsize=8)
-        ax3.set_ylabel("pairwise cosine distance", fontsize=8)
-        ax3.tick_params(axis="x", labelsize=6, rotation=90)
-        ax3.tick_params(axis="y", labelsize=7)
-        ax3.grid(axis="y", alpha=0.3)
-        fig3.tight_layout()
-        fig3.savefig(out_dir / "inter_by_supergroup.png", dpi=120, bbox_inches="tight")
-        plt.close(fig3)
-        print(f"  Saved inter supergroup plot → {out_dir / 'inter_by_supergroup.png'}")
-
-    # Combined stats JSON
-    with open(out_dir / "stats.json", "w") as f:
-        json.dump(
-            {
-                "intra": {"summary": intra_summary, "per_place": per_place},
-                "inter": {"summary": inter_summary, "per_supergroup": per_sg},
-            },
-            f,
-            indent=2,
-        )
-    print(f"  Saved stats → {out_dir / 'stats.json'}")
-
-    si = inter_summary["mean_cos_dist"]
-    print()
-    print("=" * 52)
-    print(f"  Inter-class variation ({args.dataset_name})")
-    print(f"    supergroups: {len(sg_df):,}   embedding: {place_embedding_name}")
-    print(f"    mean cos-dist:  mean={si['mean']:.4f}  std={si['std']:.4f}")
-    print(f"                    max={si['max']:.4f}  median={si['median']:.4f}")
-    print(f"                    p5={si['p5']:.4f}   p95={si['p95']:.4f}")
-    print("=" * 52)
-    print()
+    print(f"\n  {batches_done} batches, {total_images:,} images in {elapsed:.2f}s")
+    print(f"  {total_images / elapsed:.1f} images/s")
+    print(f"  {batches_done / elapsed:.1f} batches/s")
+    print(f"  {elapsed / batches_done * 1000:.1f} ms/batch")
 
     return 0
 
@@ -1045,7 +509,7 @@ def _handle_datapipeline(args: argparse.Namespace) -> int:
 
     pipeline = get_pipeline(args.name)
     context = _load_initial_context(args.context) if args.context else {}
-    pipeline.run(context)
+    pipeline.run(context, use_cache=True)
     return 0
 
 

@@ -27,7 +27,7 @@ class _DummyTrainDataset:
 
 class DataLoaderOrderTests(unittest.TestCase):
     def test_train_dataloader_disables_in_order_delivery(self) -> None:
-        with mock.patch("datamodules.datamodule.TrainDataset", _DummyTrainDataset):
+        with mock.patch("datamodules.datamodule.ContrastiveTrainDataset", _DummyTrainDataset):
             datamodule = DataModule(
                 train_dataset_name="ignored",
                 val_dataset_names=[],

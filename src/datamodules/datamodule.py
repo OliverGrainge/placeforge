@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from . import register_datamodule
-from .datasets import ClassificationTrainDataset, TrainDataset, ValDataset, TestDataset
+from .datasets import ContrastiveTrainDataset, ClassificationTrainDataset, ValDataset, TestDataset
 
 
 def _dataloader_worker_init_fn(_worker_id: int) -> None:
@@ -36,7 +36,8 @@ class DataModule(pl.LightningDataModule):
         val_transform: Any = None,
         test_dataset_names: List[str] | None = None,
         test_transform: Any = None,
-        sample_by_image: bool = False,
+        dataset_type: str = "contrastive",
+        num_supergroups: int | None = None,
     ):
         super().__init__()
         self.train_dataset_name = train_dataset_name
@@ -48,10 +49,13 @@ class DataModule(pl.LightningDataModule):
         self.val_transform = val_transform
         self.test_dataset_names = test_dataset_names or []
         self.test_transform = test_transform
-        self.sample_by_image = sample_by_image
+        if dataset_type not in ("contrastive", "classification"):
+            raise ValueError(f"dataset_type must be 'contrastive' or 'classification', got '{dataset_type}'")
+        self.dataset_type = dataset_type
+        self._num_supergroups = num_supergroups
         self.save_hyperparameters()
 
-        self._train_dataset: TrainDataset | ClassificationTrainDataset | None = None
+        self._train_dataset: ContrastiveTrainDataset | ClassificationTrainDataset | None = None
         self._val_datasets: List[ValDataset] = []
         self._test_datasets: List[TestDataset] = []
 
@@ -69,16 +73,18 @@ class DataModule(pl.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
-            if self.sample_by_image:
+            if self.dataset_type == "classification":
                 self._train_dataset = ClassificationTrainDataset(
                     self.train_dataset_name,
                     transform=self.train_transform,
+                    num_supergroups=self._num_supergroups,
                 )
             else:
-                self._train_dataset = TrainDataset(
+                self._train_dataset = ContrastiveTrainDataset(
                     self.train_dataset_name,
                     images_per_place=self.images_per_place,
                     transform=self.train_transform,
+                    num_supergroups=self._num_supergroups,
                 )
             self._val_datasets = [
                 ValDataset(name, transform=self.val_transform)

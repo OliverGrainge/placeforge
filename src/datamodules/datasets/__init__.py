@@ -1,5 +1,5 @@
-from .train import ClassificationTrainDataset, TrainDataset
+from .train import ContrastiveTrainDataset, ClassificationTrainDataset
 from .val import ValDataset
 from .test import TestDataset
 
-__all__ = ["ClassificationTrainDataset", "TrainDataset", "ValDataset", "TestDataset"]
+__all__ = ["ContrastiveTrainDataset", "ClassificationTrainDataset", "ValDataset", "TestDataset"]

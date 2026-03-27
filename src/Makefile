@@ -40,9 +40,4 @@ datapipelines_test:
 
 
 
-analyse_train:
-	@source ../.venv/bin/activate && \
-	echo "--- sf_xl_cosplace ---" && python -m cli analyse sf_xl_cosplace && \
-	echo "--- sf_xl_eigenplaces ---" && python -m cli analyse sf_xl_eigenplaces && \
-	echo "--- sf_xl_curavpr ---" && python -m cli analyse sf_xl_curavpr
 

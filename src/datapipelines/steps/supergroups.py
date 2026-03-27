@@ -82,6 +82,16 @@ class AssignCuraVPRSuperGroupStep(BaseStep):
             / place_embedding_name
         )
 
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "place_cache_dir": str(self.place_cache.cache_dir),
+            "supergroup_size": self.supergroup_size,
+            "kmeans_max_iter": self.kmeans_max_iter,
+            "seed": self.seed,
+            "N": self.N,
+            "L": self.L,
+        }
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
 
@@ -183,6 +193,9 @@ class AssignCosPlaceSuperGroupStep(BaseStep):
         self.N = N
         self.L = L
 
+    def cache_params(self) -> dict[str, Any]:
+        return {"N": self.N, "L": self.L}
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
 
@@ -227,6 +240,9 @@ class AssignEigenPlacesSuperGroupStep(BaseStep):
     def __init__(self, N: int = 3) -> None:
         super().__init__()
         self.N = N
+
+    def cache_params(self) -> dict[str, Any]:
+        return {"N": self.N}
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()

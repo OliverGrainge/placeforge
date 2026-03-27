@@ -154,6 +154,16 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
         self.heading_size_degrees = heading_size_degrees
         self.image_cache = _image_cache(image_embedding_name)
 
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "image_cache_dir": str(self.image_cache.cache_dir),
+            "cell_size_meters": self.cell_size_meters,
+            "cos_sim_threshold": self.cos_sim_threshold,
+            "min_images": self.min_images,
+            "use_heading": self.use_heading,
+            "heading_size_degrees": self.heading_size_degrees,
+        }
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         raw_df = context["traindataset"]
         if self.use_heading:
@@ -243,6 +253,12 @@ class AssignCosPlacePlaceIdStep(BaseStep):
         self.cell_size_meters = cell_size_meters
         self.heading_size_degrees = heading_size_degrees
 
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "cell_size_meters": self.cell_size_meters,
+            "heading_size_degrees": self.heading_size_degrees,
+        }
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()
 
@@ -313,6 +329,14 @@ class AssignEigenPlacesPlaceIdStep(BaseStep):
         self.focal_distance = focal_distance
         self.heading_tolerance = heading_tolerance
         self.min_images_per_place = min_images_per_place
+
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "cell_size_meters": self.cell_size_meters,
+            "focal_distance": self.focal_distance,
+            "heading_tolerance": self.heading_tolerance,
+            "min_images_per_place": self.min_images_per_place,
+        }
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"].copy()

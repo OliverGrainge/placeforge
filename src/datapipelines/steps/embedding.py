@@ -67,6 +67,12 @@ class ComputeImageEmbeddingStep(BaseStep):
             / image_embedding_name
         )
 
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "cache_dir": str(self.image_cache.cache_dir),
+            "half_precision": self.half_precision,
+        }
+
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         if not self.image_cache.exists:
             model = self._load_model(self.compile)
@@ -166,6 +172,14 @@ class AggregatePlaceEmbeddingStep(BaseStep):
         )
         self.reduction = reduction
         self.normalize = normalize
+
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "image_cache_dir": str(self.image_cache.cache_dir),
+            "place_cache_dir": str(self.place_cache.cache_dir),
+            "reduction": self.reduction,
+            "normalize": self.normalize,
+        }
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"]

@@ -10,47 +10,6 @@ import pandas as pd
 from .base import BaseStep
 
 
-class PrintTrainDataset(BaseStep):
-    """Print basic statistics about the train dataset to stdout.
-
-    Gracefully skips place-level and supergroup-level stats if the
-    corresponding columns are absent from the DataFrame.
-    """
-
-    show_pbar = False
-
-    def run(self, context: dict[str, Any]) -> dict[str, Any]:
-        df = context["traindataset"]
-        print(" ")
-        print(f"  num_images : {len(df)}")
-
-        if "place_id" in df.columns:
-            ipp = df.groupby("place_id").size()
-            print(f"  num_places : {ipp.count()}")
-            print(
-                f"  images/place — avg: {ipp.mean():.1f}  "
-                f"min: {ipp.min()}  max: {ipp.max()}"
-            )
-
-        if "supergroup_id" in df.columns:
-            isg = df.groupby("supergroup_id").size()
-            print(f"  num_supergroups : {isg.count()}")
-            print(
-                f"  images/supergroup — avg: {isg.mean():.1f}  "
-                f"min: {isg.min()}  max: {isg.max()}"
-            )
-
-            if "place_id" in df.columns:
-                ppsg = df.groupby("supergroup_id")["place_id"].nunique()
-                print(
-                    f"  places/supergroup — avg: {ppsg.mean():.1f}  "
-                    f"min: {ppsg.min()}  max: {ppsg.max()}"
-                )
-        print(" ")
-
-        return context
-
-
 class SummaryTrainDataset(BaseStep):
     def __init__(self, name: str) -> None:
         super().__init__()

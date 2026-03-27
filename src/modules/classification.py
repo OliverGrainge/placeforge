@@ -24,6 +24,7 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         weight_decay: float = 1e-4,
         warmup_steps: int = 200,
         backbone_lr_scale: float = 0.1,
+        criterion_lr_scale: float = 10.0,
         val_recall_ks: list[int] | None = None,
         # Large Margin Cosine Loss (CosFace) hyperparameters
         scale: float = 64.0,
@@ -37,20 +38,21 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
         self.backbone_lr_scale = backbone_lr_scale
+        self.criterion_lr_scale = criterion_lr_scale
         self.val_recall_ks = val_recall_ks or [1, 5, 10]
         self._scale = scale
         self._margin = margin
 
         self._supergroup_to_criterion_idx: dict[int, int] = {}
-        self.criterions = torch.nn.ModuleList()
+        self._criterions: list[torch.nn.Module] = []
         self._active_criterion_idx: int | None = None
 
     def setup(self, stage: str | None = None) -> None:
-        if stage in (None, "fit") and not self.criterions:
+        if stage in (None, "fit") and not self._criterions:
             supergroup_num_places: dict[int, int] = self.trainer.datamodule.supergroup_num_places
             sorted_supergroups = sorted(supergroup_num_places.keys())
             self._supergroup_to_criterion_idx = {sg: i for i, sg in enumerate(sorted_supergroups)}
-            self.criterions = torch.nn.ModuleList([
+            self._criterions = [
                 losses.CosFaceLoss(
                     num_classes=supergroup_num_places[sg],
                     embedding_size=self.model.descriptor_dim,
@@ -58,11 +60,7 @@ class ClassificationLightningModule(PlaceRecognitionModule):
                     margin=self._margin,
                 )
                 for sg in sorted_supergroups
-            ])
-
-    def on_train_start(self) -> None:
-        for criterion in self.criterions:
-            criterion.cpu()
+            ]
 
     def _swap_criterion(self, idx: int) -> None:
         if idx == self._active_criterion_idx:
@@ -73,19 +71,41 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         self._active_criterion_idx = idx
 
     def _move_criterion(self, idx: int, device: torch.device) -> None:
-        self.criterions[idx].to(device)
+        self._criterions[idx].to(device)
         optimizer = self.optimizers()
         if optimizer is None:
             return
-        for param in self.criterions[idx].parameters():
+        for param in self._criterions[idx].parameters():
             if param in optimizer.state:
                 for key, val in optimizer.state[param].items():
                     if isinstance(val, torch.Tensor):
                         optimizer.state[param][key] = val.to(device)
 
+    def on_train_start(self) -> None:
+        largest_idx = max(range(len(self._criterions)),
+                         key=lambda i: sum(p.numel() for p in self._criterions[i].parameters()))
+        largest = self._criterions[largest_idx]
+        num_params = sum(p.numel() for p in largest.parameters())
+        self.print(
+            f"Criterion memory check: largest criterion has "
+            f"{num_params:,} params ({num_params * 4 / 1024**2:.0f} MB fp32), "
+            f"moving to {self.device} ..."
+        )
+        largest.to(self.device)
+        largest.cpu()
+        torch.cuda.empty_cache()
+        self.print("Criterion memory check passed.")
+
     def on_train_batch_start(self, batch: dict[str, Any], batch_idx: int) -> None:
         supergroup_id: int = batch["supergroup_id"].item()
         self._swap_criterion(self._supergroup_to_criterion_idx[supergroup_id])
+
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        checkpoint["criterions"] = [c.state_dict() for c in self._criterions]
+
+    def on_load_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        for c, sd in zip(self._criterions, checkpoint["criterions"]):
+            c.load_state_dict(sd)
 
     def on_train_epoch_end(self) -> None:
         if self._active_criterion_idx is not None:
@@ -100,7 +120,7 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         labels: Tensor = batch["place_ids"]
         supergroup_id: int = batch["supergroup_id"].item()
 
-        criterion = self.criterions[self._supergroup_to_criterion_idx[supergroup_id]]
+        criterion = self._criterions[self._supergroup_to_criterion_idx[supergroup_id]]
 
         embeddings = self(inputs)
         loss: Tensor = criterion(embeddings, labels)
@@ -121,7 +141,7 @@ class ClassificationLightningModule(PlaceRecognitionModule):
 
     def configure_optimizers(self):
         criterion_params = list(itertools.chain.from_iterable(
-            c.parameters() for c in self.criterions
+            c.parameters() for c in self._criterions
         ))
         criterion_ids = {id(p) for p in criterion_params}
 
@@ -135,13 +155,13 @@ class ClassificationLightningModule(PlaceRecognitionModule):
             param_groups = [
                 {"params": backbone_params, "lr": self.learning_rate * self.backbone_lr_scale},
                 {"params": head_params, "lr": self.learning_rate},
-                {"params": criterion_params, "lr": self.learning_rate, "weight_decay": 0.0},
+                {"params": criterion_params, "lr": self.learning_rate * self.criterion_lr_scale, "weight_decay": 0.0},
             ]
         else:
             non_criterion_params = [p for p in self.parameters() if id(p) not in criterion_ids]
             param_groups = [
                 {"params": non_criterion_params, "lr": self.learning_rate},
-                {"params": criterion_params, "lr": self.learning_rate, "weight_decay": 0.0},
+                {"params": criterion_params, "lr": self.learning_rate * self.criterion_lr_scale, "weight_decay": 0.0},
             ]
 
         optimizer = torch.optim.AdamW(
