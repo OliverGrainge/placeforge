@@ -1,6 +1,9 @@
-wandb:
-  project: placeforge_contrastive
-  name: contrastive_cosplace_boq
+logger:
+  - type: wandb
+    project: placeforge_contrastive
+    name: contrastive_cosplace_boq
+  - type: csv
+    name: csv_logs
 
 trainer:
   max_steps: 10000  # use max_steps instead of max_epochs

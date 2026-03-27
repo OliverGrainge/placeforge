@@ -1,6 +1,32 @@
-wandb:
-  project: placeforge_classification
-  name: cosplace_boq
+# ── Logger ────────────────────────────────────────────────────────────────────
+# Use a single logger dict, or a list of loggers to log to multiple backends
+# at once. Each entry needs a "type" key: wandb, csv, or tensorboard.
+# Any other keys are passed directly to the PyTorch Lightning logger constructor.
+#
+# Single logger (online):
+#   logger:
+#     type: wandb
+#     project: placeforge_classification
+#
+# Single logger (offline – no internet required):
+#   logger:
+#     type: csv
+#     name: csv_logs
+#
+# Multiple loggers (e.g. always have a local CSV backup):
+#   logger:
+#     - type: wandb
+#       project: placeforge_classification
+#     - type: csv
+#       name: csv_logs
+#
+# All loggers write to the logs/ directory by default (override with save_dir).
+logger:
+  - type: wandb
+    project: placeforge_classification
+    name: cosplace_boq
+  - type: csv
+    name: csv_logs
 
 trainer:
   max_steps: 100000  # use max_steps instead of max_epochs

@@ -138,6 +138,33 @@ def main(argv: list[str] | None = None) -> int:
     return args.handler(args)
 
 
+def _build_loggers(logger_config: dict | list[dict]) -> list[Any]:
+    """Instantiate one or more PyTorch Lightning loggers from config.
+
+    Accepts a single logger dict or a list of logger dicts.
+    Each dict must have a ``type`` key (wandb, csv, or tensorboard).
+    """
+    from pytorch_lightning import loggers as pl_loggers
+
+    loggers_map = {
+        "wandb": pl_loggers.WandbLogger,
+        "csv": pl_loggers.CSVLogger,
+        "tensorboard": pl_loggers.TensorBoardLogger,
+    }
+
+    entries = logger_config if isinstance(logger_config, list) else [logger_config]
+    result = []
+    for entry in entries:
+        entry = dict(entry)  # shallow copy so we don't mutate config
+        name = entry.pop("type")
+        entry.setdefault("save_dir", str(_LOGS_DIR))
+        cls = loggers_map.get(name)
+        if cls is None:
+            raise ValueError(f"Unknown logger '{name}'. Choose from: {list(loggers_map.keys())}")
+        result.append(cls(**entry))
+    return result
+
+
 _LOGS_DIR = Path(__file__).parent.parent / "logs"
 _CONFIGS_DIR = Path(__file__).parent / "configs"
 _CHECKPOINTS_DIR = Path(__file__).parent.parent / "checkpoints"
@@ -171,12 +198,13 @@ def _handle_train(args: argparse.Namespace) -> int:
 
     trainer_kwargs.setdefault("default_root_dir", str(_LOGS_DIR))
 
-    wandb_kwargs: dict[str, Any] | None = config.get("wandb")
-    if wandb_kwargs is not None:
-        from pytorch_lightning.loggers import WandbLogger
+    logger_config: dict | list[dict] | None = config.get("logger")
+    # Backwards compat: top-level "wandb" key still works
+    if logger_config is None and config.get("wandb") is not None:
+        logger_config = {**config["wandb"], "type": "wandb"}
 
-        wandb_kwargs.setdefault("save_dir", str(_LOGS_DIR))
-        trainer_kwargs["logger"] = WandbLogger(**wandb_kwargs)
+    if logger_config is not None:
+        trainer_kwargs["logger"] = _build_loggers(logger_config)
 
     from pytorch_lightning.callbacks import ModelCheckpoint
 

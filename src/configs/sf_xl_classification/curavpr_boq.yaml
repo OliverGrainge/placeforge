@@ -1,6 +1,9 @@
-wandb:
-  project: placeforge_classification
-  name: curavpr_boq
+logger:
+  - type: wandb
+    project: placeforge_classification
+    name: curavpr_boq
+  - type: csv
+    name: csv_logs
 
 trainer:
   max_steps: 100000  # use max_steps instead of max_epochs

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import ctypes
+import gc
 from typing import Any
 
 import numpy as np
 import torch
 from torch import Tensor
+
+_libc = ctypes.CDLL("libc.so.6")
+
 
 import pytorch_lightning as pl
 
@@ -46,15 +51,17 @@ class PlaceRecognitionModule(pl.LightningModule):
 
         r1_values: list[float] = []
         for dl_idx in sorted(self._val_store.keys()):
-            all_embs = self._val_store[dl_idx]
+            all_embs = self._val_store.pop(dl_idx)
             dataset = val_datasets[dl_idx]
             num_queries = dataset.num_queries
 
-            q_embs = all_embs[:num_queries].numpy()
-            db_embs = all_embs[num_queries:].numpy()
+            q_embs = all_embs[:num_queries].numpy().copy()
+            db_embs = all_embs[num_queries:].numpy().copy()
+            del all_embs
 
             ground_truth = dataset.ground_truth()
             recalls = self._compute_recalls(q_embs, db_embs, ground_truth)
+            del q_embs, db_embs, ground_truth
 
             name = val_names[dl_idx] if dl_idx < len(val_names) else str(dl_idx)
             for k, recall in recalls.items():
@@ -66,6 +73,8 @@ class PlaceRecognitionModule(pl.LightningModule):
             self.log("val/R@1", float(np.mean(r1_values)))
 
         self._val_store.clear()
+        gc.collect()
+        _libc.malloc_trim(0)
 
     # ------------------------------------------------------------------
     # Test
@@ -136,6 +145,7 @@ class PlaceRecognitionModule(pl.LightningModule):
 
         max_k = max(self.val_recall_ks)
         _, retrieved = index.search(q_embs, min(max_k, len(db_embs)))
+        del index
 
         recalls: dict[int, float] = {}
         for k in self.val_recall_ks:

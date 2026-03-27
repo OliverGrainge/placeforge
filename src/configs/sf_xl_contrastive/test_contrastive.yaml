@@ -1,7 +1,10 @@
 # Smoke-test config: minimal steps, capped val/test batches, small batch size.
-wandb:
-  project: placeforge_contrastive
-  name: test_contrastive
+logger:
+  - type: wandb
+    project: placeforge_contrastive
+    name: test_contrastive
+  - type: csv
+    name: csv_logs
 
 trainer:
   max_steps: 5
