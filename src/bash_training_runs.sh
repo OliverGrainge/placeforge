@@ -26,7 +26,7 @@ for config in "${configs[@]}"; do
     echo "Running: $config"
     echo "=========================================="
     set +e
-    python -m cli train "$config"
+    python3 -m cli train "$config"
     status=$?
     set -e
     if [ "$status" -ne 0 ]; then

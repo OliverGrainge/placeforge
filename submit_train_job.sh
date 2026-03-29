@@ -38,9 +38,10 @@ export WANDB_MODE=offline
 # export TORCH_HOME=/path/to/shared/torch_cache
 
 # Override dataset paths for HPC (uncomment and update if not using .env)
-# export PLACEFORGE_RAW_DIR=/path/to/hpc/datasets/
-# export PLACEFORGE_FEATURE_STORE_DIR=/path/to/hpc/feature_store
-# export PLACEFORGE_PROCESSED_DIR=/path/to/hpc/processed
+
+export PLACEFORGE_RAW_DIR=/home/oliver/datasets/
+export PLACEFORGE_FEATURE_STORE_DIR=/home/oliver/datasets/placeforge/feature_store
+export PLACEFORGE_PROCESSED_DIR=/home/oliver/datasets/placeforge/processed
 
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"

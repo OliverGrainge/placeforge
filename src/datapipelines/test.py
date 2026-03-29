@@ -10,13 +10,13 @@ from datapipelines.steps import (
     SummaryTestDataset,
 )
 
+
 PITTS30K_PATH = "pitts30k"
 TOKYO247_PATH = "tokyo247"
 SF_XL_SMALL_PATH = "sf_xl"
 SF_XL_PATH = "sf_xl"
 MSLS_PATH = "msls"
-NORDLAND_PATH = "nordland"
-#NORDLAND_PATH = "VPR-datasets-downloader/datasets/nordland"
+NORDLAND_PATH = "VPR-datasets-downloader/datasets/nordland"
 SVOX_PATH = "VPR-datasets-downloader/datasets/svox"
 
 
