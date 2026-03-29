@@ -38,6 +38,7 @@ class DataModule(pl.LightningDataModule):
         test_transform: Any = None,
         dataset_type: str = "contrastive",
         num_supergroups: int | None = None,
+        num_places: int | None = None,
     ):
         super().__init__()
         self.train_dataset_name = train_dataset_name
@@ -53,6 +54,7 @@ class DataModule(pl.LightningDataModule):
             raise ValueError(f"dataset_type must be 'contrastive' or 'classification', got '{dataset_type}'")
         self.dataset_type = dataset_type
         self._num_supergroups = num_supergroups
+        self._num_places = num_places
         self.save_hyperparameters()
 
         self._train_dataset: ContrastiveTrainDataset | ClassificationTrainDataset | None = None
@@ -71,6 +73,12 @@ class DataModule(pl.LightningDataModule):
             raise RuntimeError("setup() must be called before accessing supergroup_num_places")
         return self._train_dataset.supergroup_num_places
 
+    @property
+    def num_places(self) -> int:
+        if self._train_dataset is None:
+            raise RuntimeError("setup() must be called before accessing num_places")
+        return self._train_dataset.num_places
+
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
             if self.dataset_type == "classification":
@@ -78,6 +86,7 @@ class DataModule(pl.LightningDataModule):
                     self.train_dataset_name,
                     transform=self.train_transform,
                     num_supergroups=self._num_supergroups,
+                    num_places=self._num_places,
                 )
             else:
                 self._train_dataset = ContrastiveTrainDataset(
@@ -85,6 +94,7 @@ class DataModule(pl.LightningDataModule):
                     images_per_place=self.images_per_place,
                     transform=self.train_transform,
                     num_supergroups=self._num_supergroups,
+                    num_places=self._num_places,
                 )
             self._val_datasets = [
                 ValDataset(name, transform=self.val_transform)
@@ -111,18 +121,31 @@ class DataModule(pl.LightningDataModule):
         )
 
     def train_dataloader(self) -> DataLoader:
-        batch_sampler = self._train_dataset.get_batch_sampler(
-            self.batch_size, drop_last=True,
-        )
+        use_batch_sampler = isinstance(self._train_dataset, ContrastiveTrainDataset)
+        if use_batch_sampler:
+            batch_sampler = self._train_dataset.get_batch_sampler(
+                self.batch_size, drop_last=True,
+            )
+            return DataLoader(
+                self._train_dataset,
+                batch_sampler=batch_sampler,
+                collate_fn=self._train_dataset.collate_fn,
+                num_workers=self.num_workers,
+                worker_init_fn=_dataloader_worker_init_fn if self.num_workers > 0 else None,
+                pin_memory=torch.cuda.is_available(),
+                persistent_workers=self.num_workers > 0,
+                in_order=False,
+            )
         return DataLoader(
             self._train_dataset,
-            batch_sampler=batch_sampler,
+            batch_size=self.batch_size,
+            shuffle=True,
+            drop_last=True,
             collate_fn=self._train_dataset.collate_fn,
             num_workers=self.num_workers,
             worker_init_fn=_dataloader_worker_init_fn if self.num_workers > 0 else None,
             pin_memory=torch.cuda.is_available(),
             persistent_workers=self.num_workers > 0,
-            in_order=False,
         )
 
     def val_dataloader(self) -> List[DataLoader]:

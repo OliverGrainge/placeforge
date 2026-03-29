@@ -117,7 +117,7 @@ def build_sf_xl_curavpr_cls() -> Pipeline:
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
                 cos_sim_threshold=0.4,
-                min_images=4,
+                min_images=10,
             ),
             AssignCosPlaceSuperGroupStep(N=5, L=2),
             SaveTrainDataset(name=name),

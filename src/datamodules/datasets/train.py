@@ -20,13 +20,19 @@ from torch.utils.data import Dataset, Sampler
 
 
 def _load_train_df(
-    name: str, num_supergroups: int | None = None,
+    name: str,
+    num_supergroups: int | None = None,
+    num_places: int | None = None,
 ) -> tuple[pd.DataFrame, Path]:
     """Load the train parquet and return (df, raw_dir).
 
-    If *num_supergroups* is given, only the first *num_supergroups*
-    supergroups (by id) are kept.
+    At most one of *num_supergroups* and *num_places* may be given.
+    *num_supergroups* keeps the first N supergroups (by id).
+    *num_places* keeps a deterministic random subset of N places (seeded by
+    *num_places* so the same count always produces the same subset).
     """
+    if num_supergroups is not None and num_places is not None:
+        raise ValueError("Only one of num_supergroups and num_places may be specified")
     processed_dir = Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
     raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
     parquet_path = processed_dir / "train" / name / "traindataset.parquet"
@@ -36,6 +42,16 @@ def _load_train_df(
     if num_supergroups is not None:
         keep = sorted(df["supergroup_id"].unique())[:num_supergroups]
         df = df[df["supergroup_id"].isin(keep)]
+    if num_places is not None:
+        all_places = sorted(df[["supergroup_id", "place_id"]].drop_duplicates().itertuples(index=False, name=None))
+        rng = random.Random(num_places)
+        sampled = rng.sample(all_places, min(num_places, len(all_places)))
+        keep_set = set(sampled)
+        mask = np.array([
+            (sg, pid) in keep_set
+            for sg, pid in zip(df["supergroup_id"].values, df["place_id"].values)
+        ])
+        df = df[mask]
     return df, raw_dir
 
 
@@ -103,10 +119,11 @@ class ContrastiveTrainDataset(Dataset):
         images_per_place: int,
         transform: Any = None,
         num_supergroups: int | None = None,
+        num_places: int | None = None,
     ):
         self.images_per_place = images_per_place
         self.transform = transform
-        self.df, self.raw_dir = _load_train_df(name, num_supergroups)
+        self.df, self.raw_dir = _load_train_df(name, num_supergroups, num_places)
 
         self.place_ids = self.df["place_id"].unique()
         self.place_id_to_paths = (
@@ -214,81 +231,31 @@ class ContrastiveTrainDataset(Dataset):
 # ---------------------------------------------------------------------------
 
 
-class ClassificationBatchSampler(Sampler):
-    """Yields batches where all samples share the same supergroup.
-
-    Supergroup order is shuffled once, then each supergroup is fully exhausted
-    before moving to the next.  This is required for classification training
-    where each supergroup has its own classifier head.
-    """
-
-    def __init__(
-        self,
-        supergroup_to_indices: dict[Any, list[int]],
-        batch_size: int,
-        drop_last: bool = False,
-    ):
-        self.supergroup_to_indices = supergroup_to_indices
-        self.batch_size = batch_size
-        self.drop_last = drop_last
-
-    def __iter__(self):
-        supergroups = list(self.supergroup_to_indices.keys())
-        random.shuffle(supergroups)
-        for sg in supergroups:
-            shuffled = self.supergroup_to_indices[sg].copy()
-            random.shuffle(shuffled)
-            for i in range(0, len(shuffled), self.batch_size):
-                batch = shuffled[i : i + self.batch_size]
-                if not self.drop_last or len(batch) == self.batch_size:
-                    yield batch
-
-    def __len__(self) -> int:
-        if self.drop_last:
-            return sum(
-                len(idx) // self.batch_size
-                for idx in self.supergroup_to_indices.values()
-            )
-        return sum(
-            math.ceil(len(idx) / self.batch_size)
-            for idx in self.supergroup_to_indices.values()
-        )
-
-
 class ClassificationTrainDataset(Dataset):
     """Image-level train dataset for classification.
 
-    Every image in the dataset is visited once per epoch.  Batches are
-    constrained to a single supergroup via :class:`ClassificationBatchSampler`
-    which exhausts all images in one supergroup before moving to the next.
-    Each image carries a per-supergroup local label suitable for CosFace.
-
-    Note: ``place_id`` in the saved parquet is already 0-indexed within each
-    supergroup (remapped by ``SaveTrainDataset``), so it can be used directly
-    as the local label without further remapping.
+    Every image in the dataset is visited once per epoch with standard random
+    shuffling (no supergroup ordering).  Each image carries a globally unique
+    0-indexed label suitable for a single CosFace head.
     """
 
-    def __init__(self, name: str, transform: Any = None, num_supergroups: int | None = None):
+    def __init__(self, name: str, transform: Any = None, num_supergroups: int | None = None, num_places: int | None = None):
         self.transform = transform
-        self.df, self.raw_dir = _load_train_df(name, num_supergroups)
+        self.df, self.raw_dir = _load_train_df(name, num_supergroups, num_places)
 
         # Pre-compute flat arrays for fast __getitem__
         self._image_paths: list[str] = self.df["image_path"].tolist()
-        # place_id is already 0-indexed per supergroup (from SaveTrainDataset)
-        self._local_labels = self.df["place_id"].values.astype(np.int64)
-        self._supergroup_ids = self.df["supergroup_id"].values.astype(np.int64)
 
-        # Supergroup -> image indices (row positions in the df)
-        self._supergroup_to_indices: dict[Any, list[int]] = defaultdict(list)
-        for idx, sg in enumerate(self._supergroup_ids):
-            self._supergroup_to_indices[int(sg)].append(idx)
-        self._supergroup_to_indices = dict(self._supergroup_to_indices)
-
-        # Place counts per supergroup (for classifier sizing)
-        self._supergroup_num_places: dict[Any, int] = {
-            sg: len(set(self._local_labels[idxs]))
-            for sg, idxs in self._supergroup_to_indices.items()
-        }
+        # Build globally unique 0-indexed labels from (supergroup_id, place_id)
+        sg_ids = self.df["supergroup_id"].values
+        place_ids = self.df["place_id"].values
+        unique_pairs = sorted(set(zip(sg_ids, place_ids)))
+        pair_to_label = {pair: i for i, pair in enumerate(unique_pairs)}
+        self._labels = np.array(
+            [pair_to_label[(sg, pid)] for sg, pid in zip(sg_ids, place_ids)],
+            dtype=np.int64,
+        )
+        self._num_places = len(unique_pairs)
 
     def __len__(self) -> int:
         return len(self._image_paths)
@@ -303,50 +270,20 @@ class ClassificationTrainDataset(Dataset):
 
         return {
             "image": image,
-            "local_label": int(self._local_labels[idx]),
-            "supergroup_id": int(self._supergroup_ids[idx]),
+            "label": int(self._labels[idx]),
         }
 
     @property
     def num_places(self) -> int:
-        return sum(self._supergroup_num_places.values())
+        return self._num_places
 
     @property
     def num_images(self) -> int:
         return len(self._image_paths)
 
-    @property
-    def num_supergroups(self) -> int:
-        return len(self._supergroup_to_indices)
-
-    @property
-    def supergroup_num_places(self) -> dict[Any, int]:
-        return self._supergroup_num_places
-
-    def get_batch_sampler(
-        self, batch_size: int, drop_last: bool = False,
-    ) -> ClassificationBatchSampler:
-        """Return a batch sampler with sequential supergroups."""
-        return ClassificationBatchSampler(
-            self._supergroup_to_indices, batch_size, drop_last=drop_last,
-        )
-
     @staticmethod
     def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
-        """Collate single-image samples.
-
-        Returns:
-            images: (B, C, H, W)
-            place_ids: (B,)
-            supergroup_id: scalar tensor
-        """
-        supergroup_ids = [s["supergroup_id"] for s in batch]
-        if len(set(supergroup_ids)) != 1:
-            raise AssertionError(
-                f"Train batch mixed supergroup_ids: {sorted(set(supergroup_ids))}"
-            )
         return {
             "images": torch.stack([s["image"] for s in batch]),
-            "place_ids": torch.tensor([s["local_label"] for s in batch]),
-            "supergroup_id": torch.tensor(supergroup_ids[0]),
+            "labels": torch.tensor([s["label"] for s in batch]),
         }

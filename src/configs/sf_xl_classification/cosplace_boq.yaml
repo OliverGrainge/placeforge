@@ -44,7 +44,7 @@ compile: false
 module:
   name: classification
   model_name: dinov2_boq
-  learning_rate: 1.0e-5
+  learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   warmup_steps: 500
   backbone_lr_scale: 0.1
@@ -55,7 +55,8 @@ datamodule:
   name: place_recognition
   train_dataset_name: sf_xl_cosplace
   dataset_type: classification
-  num_supergroups: 8
+  #num_supergroups: 3
+  num_places: 30000
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

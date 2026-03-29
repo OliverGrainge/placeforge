@@ -349,19 +349,20 @@ def _print_dataset_summary(datamodule: Any) -> None:
 
     num_places = train_ds.num_places
     num_images = train_ds.num_images
-    num_supergroups = train_ds.num_supergroups
-    sg_place_counts = list(train_ds.supergroup_num_places.values())
-    sg_min = min(sg_place_counts)
-    sg_max = max(sg_place_counts)
-    sg_mean = sum(sg_place_counts) / len(sg_place_counts)
 
     print()
     print("=" * 52)
     print(f"  Train: {datamodule.train_dataset_name}")
     print(f"    places:      {num_places:,}")
     print(f"    images:      {num_images:,}")
-    print(f"    supergroups: {num_supergroups:,}")
-    print(f"    places/sg:   {sg_mean:.1f}  (min {sg_min}  max {sg_max})")
+    if hasattr(train_ds, "num_supergroups"):
+        num_supergroups = train_ds.num_supergroups
+        sg_place_counts = list(train_ds.supergroup_num_places.values())
+        sg_min = min(sg_place_counts)
+        sg_max = max(sg_place_counts)
+        sg_mean = sum(sg_place_counts) / len(sg_place_counts)
+        print(f"    supergroups: {num_supergroups:,}")
+        print(f"    places/sg:   {sg_mean:.1f}  (min {sg_min}  max {sg_max})")
     if datamodule.dataset_type == "classification":
         print(f"    batch size:  {datamodule.batch_size:,}  (image-level)")
     else:
@@ -452,8 +453,8 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
                 break
 
             images = batch["images"]  # (B, C, H, W)
-            place_ids = batch["place_ids"]  # (B,)
-            sg_id = batch["supergroup_id"].item()
+            place_ids = batch.get("place_ids", batch.get("labels"))  # (B,)
+            sg_id = batch["supergroup_id"].item() if "supergroup_id" in batch else None
 
             n_images = images.shape[0]
             n_cols = min(n_images, 8)
@@ -479,10 +480,10 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
                 row, col = divmod(i, n_cols)
                 axes[row][col].set_visible(False)
 
-            fig.suptitle(
-                f"batch {batch_idx}  |  supergroup {sg_id}  |  {n_images} images",
-                fontsize=10,
-            )
+            title = f"batch {batch_idx}  |  {n_images} images"
+            if sg_id is not None:
+                title = f"batch {batch_idx}  |  supergroup {sg_id}  |  {n_images} images"
+            fig.suptitle(title, fontsize=10)
             fig.tight_layout()
             fig.savefig(output_dir / f"batch_{batch_idx}.png", dpi=100, bbox_inches="tight")
             plt.close(fig)
