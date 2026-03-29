@@ -2,21 +2,22 @@
 set -euo pipefail
 
 if [ $# -ne 1 ]; then
-    echo "Usage: $0 <config_directory>" >&2
+    echo "Usage: $0 <config_file_or_directory>" >&2
     exit 1
 fi
 
-CONFIG_DIR="$1"
+INPUT="$1"
 
-if [ ! -d "$CONFIG_DIR" ]; then
-    echo "Error: '$CONFIG_DIR' is not a directory" >&2
-    exit 1
-fi
-
-configs=("$CONFIG_DIR"/*.yaml)
-
-if [ ${#configs[@]} -eq 0 ]; then
-    echo "No .yaml config files found in '$CONFIG_DIR'" >&2
+if [ -f "$INPUT" ]; then
+    configs=("$INPUT")
+elif [ -d "$INPUT" ]; then
+    configs=("$INPUT"/*.yaml)
+    if [ ${#configs[@]} -eq 0 ]; then
+        echo "No .yaml config files found in '$INPUT'" >&2
+        exit 1
+    fi
+else
+    echo "Error: '$INPUT' is not a file or directory" >&2
     exit 1
 fi
 
