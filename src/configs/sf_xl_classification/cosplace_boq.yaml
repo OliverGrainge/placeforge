@@ -29,13 +29,13 @@ logger:
     name: csv_logs
 
 trainer:
-  max_steps: 20000  # use max_steps instead of max_epochs
+  max_steps: 50000  # use max_steps instead of max_epochs
   max_epochs: -1  # disable epoch limit when using max_steps
   accelerator: gpu
   devices: 1
   precision: 16-mixed
   log_every_n_steps: 10
-  val_check_interval: 2000
+  val_check_interval: 5000
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0  # prevent fp16 overflow from CosFace scale amplifying gradients
 
@@ -57,7 +57,7 @@ datamodule:
   train_dataset_name: sf_xl_cosplace
   dataset_type: classification
   #num_supergroups: 3
-  num_places: 30000
+  num_places: 10000
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

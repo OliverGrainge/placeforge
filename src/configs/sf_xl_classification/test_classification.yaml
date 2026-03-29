@@ -1,20 +1,23 @@
+# Smoke-test config: minimal steps, capped val/test batches, small batch size.
 logger:
   - type: wandb
     project: placeforge_classification
-    name: curavpr_boq
+    name: test_classification
   - type: csv
     name: csv_logs
 
 trainer:
-  max_steps: 50000  # use max_steps instead of max_epochs
-  max_epochs: -1  # disable epoch limit when using max_steps
+  max_steps: 5
+  max_epochs: -1
   accelerator: gpu
   devices: 1
   precision: 16-mixed
-  log_every_n_steps: 10
-  val_check_interval: 5000
+  log_every_n_steps: 1
+  val_check_interval: 5
   check_val_every_n_epoch: null
-  gradient_clip_val: 1.0  # prevent fp16 overflow from CosFace scale amplifying gradients
+  gradient_clip_val: 1.0
+  limit_val_batches: 2
+  limit_test_batches: 2
 
 compile: false
 
@@ -23,29 +26,24 @@ module:
   model_name: dinov2_boq
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 1000
+  warmup_steps: 2
   backbone_lr_scale: 0.1
   criterion_lr_scale: 10.0
   lr_schedule: constant
   val_recall_ks: [1, 5, 10]
-  
+
 datamodule:
   name: place_recognition
-  train_dataset_name: sf_xl_curavpr_cls
+  train_dataset_name: sf_xl_cosplace
   dataset_type: classification
-  #num_supergroups: 3
-  num_places: 10000
+  num_places: 100
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:
     - pitts30k_test
-    - msls_val
-    - tokyo247_test
-    - nordland_test
-    - svox_test
-  batch_size: 128
+  batch_size: 4
   images_per_place: 4
-  num_workers: 8
+  num_workers: 2
   transform:
     name: train
     image_size: 224
