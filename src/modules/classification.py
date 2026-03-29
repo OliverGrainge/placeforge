@@ -25,11 +25,15 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         backbone_lr_scale: float = 0.1,
         criterion_lr_scale: float = 10.0,
         val_recall_ks: list[int] | None = None,
+        lr_schedule: str = "cosine",
         # Large Margin Cosine Loss (CosFace) hyperparameters
         scale: float = 64.0,
         margin: float = 0.35,
     ) -> None:
         super().__init__()
+
+        if lr_schedule not in ("cosine", "constant"):
+            raise ValueError(f"lr_schedule must be 'cosine' or 'constant', got '{lr_schedule}'")
 
         self.save_hyperparameters()
         self.model = get_model(model_name, **(model_kwargs or {}))
@@ -39,6 +43,7 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         self.backbone_lr_scale = backbone_lr_scale
         self.criterion_lr_scale = criterion_lr_scale
         self.val_recall_ks = val_recall_ks or [1, 5, 10]
+        self.lr_schedule = lr_schedule
         self._scale = scale
         self._margin = margin
 
@@ -98,15 +103,22 @@ class ClassificationLightningModule(PlaceRecognitionModule):
             weight_decay=self.weight_decay,
         )
 
-        max_steps = self.trainer.max_steps
         warmup_steps = self.warmup_steps
-        min_factor = 0.01
 
-        def lr_lambda(current_step: int) -> float:
-            if current_step < warmup_steps:
-                return current_step / max(1, warmup_steps)
-            progress = (current_step - warmup_steps) / max(1, max_steps - warmup_steps)
-            return min_factor + (1 - min_factor) * 0.5 * (1.0 + math.cos(math.pi * progress))
+        if self.lr_schedule == "constant":
+            def lr_lambda(current_step: int) -> float:
+                if current_step < warmup_steps:
+                    return current_step / max(1, warmup_steps)
+                return 1.0
+        else:
+            max_steps = self.trainer.max_steps
+            min_factor = 0.01
+
+            def lr_lambda(current_step: int) -> float:
+                if current_step < warmup_steps:
+                    return current_step / max(1, warmup_steps)
+                progress = (current_step - warmup_steps) / max(1, max_steps - warmup_steps)
+                return min_factor + (1 - min_factor) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}

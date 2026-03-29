@@ -49,6 +49,7 @@ module:
   warmup_steps: 1000
   backbone_lr_scale: 0.1
   criterion_lr_scale: 10.0
+  lr_schedule: constant
   val_recall_ks: [1, 5, 10]
   
 datamodule:
