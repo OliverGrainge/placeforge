@@ -43,9 +43,20 @@ def _load_train_df(
         keep = sorted(df["supergroup_id"].unique())[:num_supergroups]
         df = df[df["supergroup_id"].isin(keep)]
     if num_places is not None:
-        all_places = sorted(df[["supergroup_id", "place_id"]].drop_duplicates().itertuples(index=False, name=None))
         rng = random.Random(num_places)
-        sampled = rng.sample(all_places, min(num_places, len(all_places)))
+        place_df = df[["supergroup_id", "place_id"]].drop_duplicates()
+        grouped = {
+            sg: sorted(g["place_id"].tolist())
+            for sg, g in place_df.groupby("supergroup_id")
+        }
+        n_supergroups = len(grouped)
+        per_sg = num_places // n_supergroups
+        remainder = num_places % n_supergroups
+        sampled: list[tuple] = []
+        for i, sg in enumerate(sorted(grouped)):
+            places = grouped[sg]
+            k = min(per_sg + (1 if i < remainder else 0), len(places))
+            sampled.extend((sg, pid) for pid in rng.sample(places, k))
         keep_set = set(sampled)
         mask = np.array([
             (sg, pid) in keep_set

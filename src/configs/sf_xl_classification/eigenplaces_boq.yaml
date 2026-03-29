@@ -6,13 +6,13 @@ logger:
     name: csv_logs
 
 trainer:
-  max_steps: 100000  # use max_steps instead of max_epochs
+  max_steps: 20000  # use max_steps instead of max_epochs
   max_epochs: -1  # disable epoch limit when using max_steps
   accelerator: gpu
   devices: 1
   precision: 16-mixed
   log_every_n_steps: 10
-  val_check_interval: 5000
+  val_check_interval: 2000
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0  # prevent fp16 overflow from CosFace scale amplifying gradients
 
@@ -23,7 +23,7 @@ module:
   model_name: dinov2_boq
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 500
+  warmup_steps: 1000
   backbone_lr_scale: 0.1
   criterion_lr_scale: 10.0
   val_recall_ks: [1, 5, 10]

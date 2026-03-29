@@ -25,6 +25,22 @@ fi
 
 mkdir -p logs
 
+# ── Environment setup ────────────────────────────────────────────────────
+# Activate your conda/venv environment (update this path for your cluster)
+# source /path/to/your/conda/bin/activate placeforge
+# source /path/to/your/venv/bin/activate
+
+# Wandb offline mode (compute nodes have no internet)
+export WANDB_MODE=offline
+
+# Pre-populated model cache (download on login node, used on compute nodes)
+# export TORCH_HOME=/path/to/shared/torch_cache
+
+# Override dataset paths for HPC (uncomment and update if not using .env)
+# export PLACEFORGE_RAW_DIR=/path/to/hpc/datasets/
+# export PLACEFORGE_FEATURE_STORE_DIR=/path/to/hpc/feature_store
+# export PLACEFORGE_PROCESSED_DIR=/path/to/hpc/processed
+
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
 echo "Config: $CONFIG"

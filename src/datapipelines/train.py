@@ -103,7 +103,7 @@ def build_sf_xl_curavpr_con() -> Pipeline:
 
 
 @register_pipeline("sf_xl_curavpr_cls", category="train")
-def build_sf_xl_curavpr_cls() -> Pipeline:
+def build_sf_xl_curavpr_con() -> Pipeline:
     name = "sf_xl_curavpr_cls"
     return Pipeline(
         name,
@@ -119,12 +119,24 @@ def build_sf_xl_curavpr_cls() -> Pipeline:
                 cos_sim_threshold=0.4,
                 min_images=10,
             ),
-            AssignCosPlaceSuperGroupStep(N=5, L=2),
+
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name="sf_xl",
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=512,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
             AnalyseTrainDatasetStep(name=name),
         ],
     )
-
 
 
