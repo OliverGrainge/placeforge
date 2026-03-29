@@ -6,7 +6,7 @@ logger:
     name: csv_logs
 
 trainer:
-  max_steps: 10000  # use max_steps instead of max_epochs
+  max_steps: 25000  # use max_steps instead of max_epochs
   max_epochs: -1  # disable epoch limit when using max_steps
   accelerator: gpu
   devices: 1
@@ -34,7 +34,7 @@ datamodule:
   train_dataset_name: sf_xl_eigenplaces
   dataset_type: classification
   #num_supergroups: 3
-  num_places: 1000
+  num_places: 4000
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:
