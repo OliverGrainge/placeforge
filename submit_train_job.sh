@@ -39,9 +39,9 @@ export WANDB_MODE=offline
 
 # Override dataset paths for HPC (uncomment and update if not using .env)
 
-export PLACEFORGE_RAW_DIR=/home/oliver/datasets/
-export PLACEFORGE_FEATURE_STORE_DIR=/home/oliver/datasets/placeforge/feature_store
-export PLACEFORGE_PROCESSED_DIR=/home/oliver/datasets/placeforge/processed
+export PLACEFORGE_RAW_DIR=/iridisfs/geosets/
+export PLACEFORGE_FEATURE_STORE_DIR=/iridisfs/geosets/placeforge/feature_store
+export PLACEFORGE_PROCESSED_DIR=/iridisfs/geosets/placeforge/processed
 
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
