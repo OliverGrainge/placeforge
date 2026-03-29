@@ -64,17 +64,8 @@ class ClassificationLightningModule(PlaceRecognitionModule):
         embeddings = self(inputs)
         loss: Tensor = self.criterion(embeddings, labels)
 
-        # Batch R@1: fraction of samples whose nearest neighbour shares the label
-        with torch.no_grad():
-            normed = torch.nn.functional.normalize(embeddings, dim=-1)
-            sim = normed @ normed.T
-            sim.fill_diagonal_(float("-inf"))
-            nn_labels = labels[sim.argmax(dim=-1)]
-            accuracy = (nn_labels == labels).float().mean()
-
         log_kwargs = dict(on_step=True, on_epoch=True, batch_size=labels.numel())
         self.log("train/loss", loss, prog_bar=True, **log_kwargs)
-        self.log("train/accuracy", accuracy, prog_bar=False, **log_kwargs)
         self.log("train/lr", self.optimizers().param_groups[0]["lr"], on_step=True, on_epoch=False)
         return loss
 
