@@ -33,8 +33,11 @@ datamodule:
   name: place_recognition
   train_dataset_name: sf_xl_eigenplaces
   dataset_type: classification
-  #num_supergroups: 3
-  num_places: 4000
+  sampler:
+    #num_supergroups: 3
+    num_places: 4000
+    #min_places_per_supergroup: 5
+    #order_by: null
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

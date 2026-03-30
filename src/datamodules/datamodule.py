@@ -37,8 +37,7 @@ class DataModule(pl.LightningDataModule):
         test_dataset_names: List[str] | None = None,
         test_transform: Any = None,
         dataset_type: str = "contrastive",
-        num_supergroups: int | None = None,
-        num_places: int | None = None,
+        sampler: dict | None = None,
     ):
         super().__init__()
         self.train_dataset_name = train_dataset_name
@@ -53,8 +52,7 @@ class DataModule(pl.LightningDataModule):
         if dataset_type not in ("contrastive", "classification"):
             raise ValueError(f"dataset_type must be 'contrastive' or 'classification', got '{dataset_type}'")
         self.dataset_type = dataset_type
-        self._num_supergroups = num_supergroups
-        self._num_places = num_places
+        self._sampler = sampler or {}
         self.save_hyperparameters()
 
         self._train_dataset: ContrastiveTrainDataset | ClassificationTrainDataset | None = None
@@ -81,20 +79,24 @@ class DataModule(pl.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
+            sampler_kwargs = {
+                "num_supergroups": self._sampler.get("num_supergroups"),
+                "num_places": self._sampler.get("num_places"),
+                "min_places_per_supergroup": self._sampler.get("min_places_per_supergroup"),
+                "order_by": self._sampler.get("order_by"),
+            }
             if self.dataset_type == "classification":
                 self._train_dataset = ClassificationTrainDataset(
                     self.train_dataset_name,
                     transform=self.train_transform,
-                    num_supergroups=self._num_supergroups,
-                    num_places=self._num_places,
+                    **sampler_kwargs,
                 )
             else:
                 self._train_dataset = ContrastiveTrainDataset(
                     self.train_dataset_name,
                     images_per_place=self.images_per_place,
                     transform=self.train_transform,
-                    num_supergroups=self._num_supergroups,
-                    num_places=self._num_places,
+                    **sampler_kwargs,
                 )
             self._val_datasets = [
                 ValDataset(name, transform=self.val_transform)

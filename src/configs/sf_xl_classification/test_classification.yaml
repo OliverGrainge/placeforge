@@ -36,7 +36,8 @@ datamodule:
   name: place_recognition
   train_dataset_name: sf_xl_cosplace
   dataset_type: classification
-  num_places: 100
+  sampler:
+    num_places: 100
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

@@ -31,7 +31,11 @@ datamodule:
   name: place_recognition
   train_dataset_name: sf_xl_curavpr
   dataset_type: contrastive
-  num_supergroups: null
+  sampler:
+    num_supergroups: null
+    #num_places: null
+    #min_places_per_supergroup: null
+    #order_by: null
   val_dataset_names:
     - pitts30k_val 
   test_dataset_names:

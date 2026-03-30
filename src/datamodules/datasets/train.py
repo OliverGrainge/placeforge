@@ -23,6 +23,8 @@ def _load_train_df(
     name: str,
     num_supergroups: int | None = None,
     num_places: int | None = None,
+    min_places_per_supergroup: int | None = None,
+    order_by: str | None = None,
 ) -> tuple[pd.DataFrame, Path]:
     """Load the train parquet and return (df, raw_dir).
 
@@ -30,6 +32,15 @@ def _load_train_df(
     *num_supergroups* keeps the first N supergroups (by id).
     *num_places* keeps a deterministic random subset of N places (seeded by
     *num_places* so the same count always produces the same subset).
+
+    *min_places_per_supergroup* guarantees each supergroup contributes at least
+    this many places (capped by how many the supergroup actually has).  When
+    combined with *num_places*, the minimum is satisfied first and the remaining
+    budget is distributed across supergroups.
+
+    *order_by* is a column name in the parquet.  When given, places within each
+    supergroup are ranked by the minimum value of that column (ascending) and
+    selected in that order instead of randomly.
     """
     if num_supergroups is not None and num_places is not None:
         raise ValueError("Only one of num_supergroups and num_places may be specified")
@@ -43,26 +54,80 @@ def _load_train_df(
         keep = sorted(df["supergroup_id"].unique())[:num_supergroups]
         df = df[df["supergroup_id"].isin(keep)]
     if num_places is not None:
-        rng = random.Random(num_places)
         place_df = df[["supergroup_id", "place_id"]].drop_duplicates()
-        grouped = {
-            sg: sorted(g["place_id"].tolist())
-            for sg, g in place_df.groupby("supergroup_id")
-        }
+
+        # Build ordered place lists per supergroup
+        if order_by is not None:
+            if order_by not in df.columns:
+                raise ValueError(
+                    f"order_by column '{order_by}' not found in dataset. "
+                    f"Available columns: {sorted(df.columns.tolist())}"
+                )
+            # Rank places by the minimum value of the order_by column
+            place_rank = (
+                df.groupby(["supergroup_id", "place_id"])[order_by]
+                .min()
+                .reset_index()
+                .sort_values(["supergroup_id", order_by])
+            )
+            grouped = {
+                sg: g["place_id"].tolist()
+                for sg, g in place_rank.groupby("supergroup_id")
+            }
+        else:
+            grouped = {
+                sg: sorted(g["place_id"].tolist())
+                for sg, g in place_df.groupby("supergroup_id")
+            }
+
         n_supergroups = len(grouped)
-        per_sg = num_places // n_supergroups
-        remainder = num_places % n_supergroups
+        min_per_sg = min_places_per_supergroup or 0
+
+        # Phase 1: allocate the minimum to each supergroup
+        base_alloc = {
+            sg: min(min_per_sg, len(places))
+            for sg, places in grouped.items()
+        }
+        allocated = sum(base_alloc.values())
+        remaining = max(0, num_places - allocated)
+
+        # Phase 2: distribute the remaining budget equally
+        if remaining > 0:
+            headroom = {
+                sg: len(grouped[sg]) - base_alloc[sg]
+                for sg in sorted(grouped)
+            }
+            per_sg_extra = remaining // n_supergroups
+            extra_remainder = remaining % n_supergroups
+            for i, sg in enumerate(sorted(grouped)):
+                extra = min(per_sg_extra + (1 if i < extra_remainder else 0), headroom[sg])
+                base_alloc[sg] += extra
+
+        # Phase 3: select places (ordered or random)
+        rng = random.Random(num_places)
         sampled: list[tuple] = []
-        for i, sg in enumerate(sorted(grouped)):
+        for sg in sorted(grouped):
             places = grouped[sg]
-            k = min(per_sg + (1 if i < remainder else 0), len(places))
-            sampled.extend((sg, pid) for pid in rng.sample(places, k))
+            k = base_alloc[sg]
+            if order_by is not None:
+                # Places are already sorted by the order_by column
+                selected = places[:k]
+            else:
+                selected = rng.sample(places, k)
+            sampled.extend((sg, pid) for pid in selected)
+
         keep_set = set(sampled)
         mask = np.array([
             (sg, pid) in keep_set
             for sg, pid in zip(df["supergroup_id"].values, df["place_id"].values)
         ])
         df = df[mask]
+    elif min_places_per_supergroup is not None:
+        # Apply min_places_per_supergroup as a filter even without num_places
+        place_df = df[["supergroup_id", "place_id"]].drop_duplicates()
+        sg_counts = place_df.groupby("supergroup_id").size()
+        keep_sgs = sg_counts[sg_counts >= min_places_per_supergroup].index
+        df = df[df["supergroup_id"].isin(keep_sgs)]
     return df, raw_dir
 
 
@@ -131,10 +196,16 @@ class ContrastiveTrainDataset(Dataset):
         transform: Any = None,
         num_supergroups: int | None = None,
         num_places: int | None = None,
+        min_places_per_supergroup: int | None = None,
+        order_by: str | None = None,
     ):
         self.images_per_place = images_per_place
         self.transform = transform
-        self.df, self.raw_dir = _load_train_df(name, num_supergroups, num_places)
+        self.df, self.raw_dir = _load_train_df(
+            name, num_supergroups, num_places,
+            min_places_per_supergroup=min_places_per_supergroup,
+            order_by=order_by,
+        )
 
         self.place_ids = self.df["place_id"].unique()
         self.place_id_to_paths = (
@@ -250,9 +321,21 @@ class ClassificationTrainDataset(Dataset):
     0-indexed label suitable for a single CosFace head.
     """
 
-    def __init__(self, name: str, transform: Any = None, num_supergroups: int | None = None, num_places: int | None = None):
+    def __init__(
+        self,
+        name: str,
+        transform: Any = None,
+        num_supergroups: int | None = None,
+        num_places: int | None = None,
+        min_places_per_supergroup: int | None = None,
+        order_by: str | None = None,
+    ):
         self.transform = transform
-        self.df, self.raw_dir = _load_train_df(name, num_supergroups, num_places)
+        self.df, self.raw_dir = _load_train_df(
+            name, num_supergroups, num_places,
+            min_places_per_supergroup=min_places_per_supergroup,
+            order_by=order_by,
+        )
 
         # Pre-compute flat arrays for fast __getitem__
         self._image_paths: list[str] = self.df["image_path"].tolist()
