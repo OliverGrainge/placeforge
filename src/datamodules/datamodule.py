@@ -23,8 +23,68 @@ def _dataloader_worker_init_fn(_worker_id: int) -> None:
         torch.set_num_interop_threads(1)
 
 
+class BaseDataModule(pl.LightningDataModule):
+    """Base datamodule providing validation and test dataloader logic.
+
+    Subclass this and implement ``setup_train`` / ``train_dataloader`` to
+    define the training behaviour.
+    """
+
+    def __init__(
+        self,
+        val_dataset_names: List[str],
+        batch_size: int,
+        num_workers: int = os.cpu_count() // 2,
+        val_transform: Any = None,
+        test_dataset_names: List[str] | None = None,
+        test_transform: Any = None,
+    ):
+        super().__init__()
+        self.val_dataset_names = val_dataset_names
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.val_transform = val_transform
+        self.test_dataset_names = test_dataset_names or []
+        self.test_transform = test_transform
+
+        self._val_datasets: List[ValDataset] = []
+        self._test_datasets: List[TestDataset] = []
+
+    def setup(self, stage: str | None = None) -> None:
+        if stage in (None, "fit"):
+            self._val_datasets = [
+                ValDataset(name, transform=self.val_transform)
+                for name in self.val_dataset_names
+            ]
+        if stage in (None, "test"):
+            self._test_datasets = []
+            for name in self.test_dataset_names:
+                try:
+                    self._test_datasets.append(TestDataset(name, transform=self.test_transform))
+                except FileNotFoundError:
+                    self._test_datasets.append(ValDataset(name, transform=self.test_transform))
+
+    def _eval_dataloader(self, ds: ValDataset | TestDataset) -> DataLoader:
+        workers = max(1, self.num_workers // 2)
+        return DataLoader(
+            ds,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=workers,
+            worker_init_fn=_dataloader_worker_init_fn if workers > 0 else None,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=workers > 0,
+        )
+
+    def val_dataloader(self) -> List[DataLoader]:
+        return [self._eval_dataloader(ds) for ds in self._val_datasets]
+
+    def test_dataloader(self) -> List[DataLoader]:
+        return [self._eval_dataloader(ds) for ds in self._test_datasets]
+
+
 @register_datamodule("place_recognition")
-class DataModule(pl.LightningDataModule):
+class PlaceRecognitionTrainDataModule(BaseDataModule):
     def __init__(
         self,
         train_dataset_name: str,
@@ -39,16 +99,17 @@ class DataModule(pl.LightningDataModule):
         dataset_type: str = "contrastive",
         sampler: dict | None = None,
     ):
-        super().__init__()
+        super().__init__(
+            val_dataset_names=val_dataset_names,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            val_transform=val_transform,
+            test_dataset_names=test_dataset_names,
+            test_transform=test_transform,
+        )
         self.train_dataset_name = train_dataset_name
-        self.val_dataset_names = val_dataset_names
-        self.batch_size = batch_size
-        self.num_workers = num_workers
         self.images_per_place = images_per_place
         self.train_transform = train_transform
-        self.val_transform = val_transform
-        self.test_dataset_names = test_dataset_names or []
-        self.test_transform = test_transform
         if dataset_type not in ("contrastive", "classification"):
             raise ValueError(f"dataset_type must be 'contrastive' or 'classification', got '{dataset_type}'")
         self.dataset_type = dataset_type
@@ -56,8 +117,6 @@ class DataModule(pl.LightningDataModule):
         self.save_hyperparameters()
 
         self._train_dataset: ContrastiveTrainDataset | ClassificationTrainDataset | None = None
-        self._val_datasets: List[ValDataset] = []
-        self._test_datasets: List[TestDataset] = []
 
     @property
     def num_supergroups(self) -> int:
@@ -98,29 +157,7 @@ class DataModule(pl.LightningDataModule):
                     transform=self.train_transform,
                     **sampler_kwargs,
                 )
-            self._val_datasets = [
-                ValDataset(name, transform=self.val_transform)
-                for name in self.val_dataset_names
-            ]
-        if stage in (None, "test"):
-            self._test_datasets = []
-            for name in self.test_dataset_names:
-                try:
-                    self._test_datasets.append(TestDataset(name, transform=self.test_transform))
-                except FileNotFoundError:
-                    self._test_datasets.append(ValDataset(name, transform=self.test_transform))
-
-    def _eval_dataloader(self, ds: ValDataset | TestDataset) -> DataLoader:
-        workers = max(1, self.num_workers // 2)
-        return DataLoader(
-            ds,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=workers,
-            worker_init_fn=_dataloader_worker_init_fn if workers > 0 else None,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=workers > 0,
-        )
+        super().setup(stage)
 
     def train_dataloader(self) -> DataLoader:
         use_batch_sampler = isinstance(self._train_dataset, ContrastiveTrainDataset)
@@ -149,9 +186,3 @@ class DataModule(pl.LightningDataModule):
             pin_memory=torch.cuda.is_available(),
             persistent_workers=self.num_workers > 0,
         )
-
-    def val_dataloader(self) -> List[DataLoader]:
-        return [self._eval_dataloader(ds) for ds in self._val_datasets]
-
-    def test_dataloader(self) -> List[DataLoader]:
-        return [self._eval_dataloader(ds) for ds in self._test_datasets]

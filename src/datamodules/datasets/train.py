@@ -207,10 +207,24 @@ class ContrastiveTrainDataset(Dataset):
             order_by=order_by,
         )
 
+        self._has_heading = "heading" in self.df.columns
+        self._has_utm = "utm_east" in self.df.columns and "utm_north" in self.df.columns
+
         self.place_ids = self.df["place_id"].unique()
         self.place_id_to_paths = (
             self.df.groupby("place_id")["image_path"].apply(list).to_dict()
         )
+        if self._has_heading:
+            self.place_id_to_headings = (
+                self.df.groupby("place_id")["heading"].apply(list).to_dict()
+            )
+        if self._has_utm:
+            self.place_id_to_utm_east = (
+                self.df.groupby("place_id")["utm_east"].apply(list).to_dict()
+            )
+            self.place_id_to_utm_north = (
+                self.df.groupby("place_id")["utm_north"].apply(list).to_dict()
+            )
         self.place_id_to_supergroup = (
             self.df.groupby("place_id")["supergroup_id"].first().to_dict()
         )
@@ -224,9 +238,11 @@ class ContrastiveTrainDataset(Dataset):
         all_paths = self.place_id_to_paths[place_id]
         n = self.images_per_place
         if n <= len(all_paths):
-            sampled_paths = random.sample(all_paths, k=n)
+            indices = random.sample(range(len(all_paths)), k=n)
         else:
-            sampled_paths = random.choices(all_paths, k=n)
+            indices = random.choices(range(len(all_paths)), k=n)
+
+        sampled_paths = [all_paths[i] for i in indices]
 
         images = []
         for path in sampled_paths:
@@ -237,12 +253,20 @@ class ContrastiveTrainDataset(Dataset):
                 image = self.transform(image)
             images.append(image)
 
-        return {
+        result = {
             "images": images,
             "place_id": place_id,
             "local_label": place_id,
             "supergroup_id": self.place_id_to_supergroup[place_id],
         }
+        if self._has_heading:
+            all_headings = self.place_id_to_headings[place_id]
+            result["headings"] = [all_headings[i] for i in indices]
+        if self._has_utm:
+            all_utm_east = self.place_id_to_utm_east[place_id]
+            all_utm_north = self.place_id_to_utm_north[place_id]
+            result["utm"] = [[all_utm_east[i], all_utm_north[i]] for i in indices]
+        return result
 
     @property
     def num_supergroups(self) -> int:
@@ -286,6 +310,7 @@ class ContrastiveTrainDataset(Dataset):
             images: tensor of shape (B * images_per_place, C, H, W)
             place_ids: tensor of shape (B * images_per_place,), one per image
             supergroup_id: scalar tensor, shared by all images in the batch
+            headings: tensor of shape (B * images_per_place,), if available
         """
         supergroup_ids = [sample["supergroup_id"] for sample in batch]
         unique_supergroup_ids = set(supergroup_ids)
@@ -301,11 +326,20 @@ class ContrastiveTrainDataset(Dataset):
             for sample in batch
             for pid in [sample["local_label"]] * len(sample["images"])
         ]
-        return {
+        result = {
             "images": images,
             "place_ids": torch.tensor(place_ids),
             "supergroup_id": torch.tensor(supergroup_ids[0]),
         }
+        if "headings" in batch[0]:
+            result["headings"] = torch.tensor(
+                [h for sample in batch for h in sample["headings"]]
+            )
+        if "utm" in batch[0]:
+            result["utm"] = torch.tensor(
+                [coord for sample in batch for coord in sample["utm"]]
+            )
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -337,8 +371,15 @@ class ClassificationTrainDataset(Dataset):
             order_by=order_by,
         )
 
+        self._has_heading = "heading" in self.df.columns
+        self._has_utm = "utm_east" in self.df.columns and "utm_north" in self.df.columns
+
         # Pre-compute flat arrays for fast __getitem__
         self._image_paths: list[str] = self.df["image_path"].tolist()
+        if self._has_heading:
+            self._headings = self.df["heading"].values
+        if self._has_utm:
+            self._utm = np.stack([self.df["utm_east"].values, self.df["utm_north"].values], axis=1)
 
         # Build globally unique 0-indexed labels from (supergroup_id, place_id)
         sg_ids = self.df["supergroup_id"].values
@@ -362,10 +403,15 @@ class ClassificationTrainDataset(Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        return {
+        result = {
             "image": image,
             "label": int(self._labels[idx]),
         }
+        if self._has_heading:
+            result["heading"] = float(self._headings[idx])
+        if self._has_utm:
+            result["utm"] = self._utm[idx].tolist()
+        return result
 
     @property
     def num_places(self) -> int:
@@ -377,7 +423,12 @@ class ClassificationTrainDataset(Dataset):
 
     @staticmethod
     def collate_fn(batch: list[dict[str, Any]]) -> dict[str, Any]:
-        return {
+        result = {
             "images": torch.stack([s["image"] for s in batch]),
             "labels": torch.tensor([s["label"] for s in batch]),
         }
+        if "heading" in batch[0]:
+            result["headings"] = torch.tensor([s["heading"] for s in batch])
+        if "utm" in batch[0]:
+            result["utm"] = torch.tensor([s["utm"] for s in batch])
+        return result

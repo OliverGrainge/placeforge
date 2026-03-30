@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from datamodules.datamodule import DataModule
+from datamodules.datamodule import PlaceRecognitionTrainDataModule
 
 
 class _DummyTrainDataset:
@@ -28,7 +28,7 @@ class _DummyTrainDataset:
 class DataLoaderOrderTests(unittest.TestCase):
     def test_train_dataloader_disables_in_order_delivery(self) -> None:
         with mock.patch("datamodules.datamodule.ContrastiveTrainDataset", _DummyTrainDataset):
-            datamodule = DataModule(
+            datamodule = PlaceRecognitionTrainDataModule(
                 train_dataset_name="ignored",
                 val_dataset_names=[],
                 batch_size=16,
