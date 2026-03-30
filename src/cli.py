@@ -347,13 +347,13 @@ def _print_dataset_summary(datamodule: Any) -> None:
     val_datasets = datamodule._val_datasets
     val_names = datamodule.val_dataset_names
 
-    num_places = train_ds.num_places
-    num_images = train_ds.num_images
+    num_images = train_ds.num_images if hasattr(train_ds, "num_images") else len(train_ds)
 
     print()
     print("=" * 52)
     print(f"  Train: {datamodule.train_dataset_name}")
-    print(f"    places:      {num_places:,}")
+    if hasattr(train_ds, "num_places"):
+        print(f"    places:      {train_ds.num_places:,}")
     print(f"    images:      {num_images:,}")
     if hasattr(train_ds, "num_supergroups"):
         num_supergroups = train_ds.num_supergroups
@@ -363,14 +363,16 @@ def _print_dataset_summary(datamodule: Any) -> None:
         sg_mean = sum(sg_place_counts) / len(sg_place_counts)
         print(f"    supergroups: {num_supergroups:,}")
         print(f"    places/sg:   {sg_mean:.1f}  (min {sg_min}  max {sg_max})")
-    if datamodule.dataset_type == "classification":
+    if getattr(datamodule, "dataset_type", None) == "classification":
         print(f"    batch size:  {datamodule.batch_size:,}  (image-level)")
-    else:
+    elif hasattr(train_ds, "images_per_place"):
         images_per_place = train_ds.images_per_place
         print(
             f"    batch size:  {datamodule.batch_size * images_per_place:,}  "
             f"({datamodule.batch_size} places × {images_per_place} images)"
         )
+    else:
+        print(f"    batch size:  {datamodule.batch_size:,}")
 
     for name, ds in zip(val_names, val_datasets):
         print(f"  Val: {name}")
@@ -446,44 +448,78 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
         std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
         loader_iter = iter(loader)
+        is_graded = "anchors" in next(iter(loader))
+        loader_iter = iter(loader)
+
         for batch_idx in range(args.save_batches):
             try:
                 batch = next(loader_iter)
             except StopIteration:
                 break
 
-            images = batch["images"]  # (B, C, H, W)
-            place_ids = batch.get("place_ids", batch.get("labels"))  # (B,)
-            sg_id = batch["supergroup_id"].item() if "supergroup_id" in batch else None
+            if is_graded:
+                # Graded similarity: show anchor-pair columns with similarity
+                anchors = batch["anchors"]  # (B, C, H, W)
+                pairs = batch["pairs"]      # (B, C, H, W)
+                sims = batch["similarities"]  # (B,)
+                n_pairs = anchors.shape[0]
+                n_show = min(n_pairs, 8)
 
-            n_images = images.shape[0]
-            n_cols = min(n_images, 8)
-            n_rows = (n_images + n_cols - 1) // n_cols
+                fig, axes = plt.subplots(
+                    n_show, 2,
+                    figsize=(5, n_show * 2.5),
+                    squeeze=False,
+                )
 
-            fig, axes = plt.subplots(
-                n_rows, n_cols,
-                figsize=(n_cols * 2.5, n_rows * 2.5),
-                squeeze=False,
-            )
+                for i in range(n_show):
+                    for col_idx, (img_t, label) in enumerate([
+                        (anchors[i], "anchor"),
+                        (pairs[i], "pair"),
+                    ]):
+                        ax = axes[i][col_idx]
+                        img = img_t * std + mean
+                        img = img.clamp(0, 1).permute(1, 2, 0).numpy()
+                        ax.imshow(img)
+                        sim_val = sims[i].item()
+                        ax.set_title(f"{label}  ψ={sim_val:.2f}", fontsize=7)
+                        ax.set_xticks([])
+                        ax.set_yticks([])
 
-            for i in range(n_images):
-                row, col = divmod(i, n_cols)
-                ax = axes[row][col]
-                img = images[i] * std + mean
-                img = img.clamp(0, 1).permute(1, 2, 0).numpy()
-                ax.imshow(img)
-                ax.set_title(f"pid={place_ids[i].item()}", fontsize=7)
-                ax.set_xticks([])
-                ax.set_yticks([])
+                fig.suptitle(f"batch {batch_idx}  |  {n_pairs} pairs", fontsize=10)
+            else:
+                images = batch["images"]  # (B, C, H, W)
+                place_ids = batch.get("place_ids", batch.get("labels"))  # (B,)
+                sg_id = batch["supergroup_id"].item() if "supergroup_id" in batch else None
 
-            for i in range(n_images, n_rows * n_cols):
-                row, col = divmod(i, n_cols)
-                axes[row][col].set_visible(False)
+                n_images = images.shape[0]
+                n_cols = min(n_images, 8)
+                n_rows = (n_images + n_cols - 1) // n_cols
 
-            title = f"batch {batch_idx}  |  {n_images} images"
-            if sg_id is not None:
-                title = f"batch {batch_idx}  |  supergroup {sg_id}  |  {n_images} images"
-            fig.suptitle(title, fontsize=10)
+                fig, axes = plt.subplots(
+                    n_rows, n_cols,
+                    figsize=(n_cols * 2.5, n_rows * 2.5),
+                    squeeze=False,
+                )
+
+                for i in range(n_images):
+                    row, col = divmod(i, n_cols)
+                    ax = axes[row][col]
+                    img = images[i] * std + mean
+                    img = img.clamp(0, 1).permute(1, 2, 0).numpy()
+                    ax.imshow(img)
+                    ax.set_title(f"pid={place_ids[i].item()}", fontsize=7)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+
+                for i in range(n_images, n_rows * n_cols):
+                    row, col = divmod(i, n_cols)
+                    axes[row][col].set_visible(False)
+
+                title = f"batch {batch_idx}  |  {n_images} images"
+                if sg_id is not None:
+                    title = f"batch {batch_idx}  |  supergroup {sg_id}  |  {n_images} images"
+                fig.suptitle(title, fontsize=10)
+
             fig.tight_layout()
             fig.savefig(output_dir / f"batch_{batch_idx}.png", dpi=100, bbox_inches="tight")
             plt.close(fig)
@@ -502,7 +538,7 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
             batch = next(loader_iter)
         except StopIteration:
             break
-        total_images += batch["images"].shape[0]
+        total_images += batch["anchors"].shape[0] * 2 if "anchors" in batch else batch["images"].shape[0]
         elapsed = time.perf_counter() - t_start
         pbar.set_postfix_str(
             f"{total_images / elapsed:.0f} img/s, "

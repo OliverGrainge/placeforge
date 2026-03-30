@@ -52,3 +52,8 @@ try:
     from . import classification as _classification
 except ModuleNotFoundError:
     _classification = None
+
+try:
+    from . import graded as _graded
+except ModuleNotFoundError:
+    _graded = None

@@ -10,6 +10,7 @@ from .supergroups import (
     AssignEigenPlacesSuperGroupStep,
 )
 from .save import SaveTrainDataset, SaveValDataset, SaveTestDataset
+from .graded_similarity import ComputeFoVOverlapStep, SaveGradedTrainDataset
 from .matches import ComputeValMatchesStep, ComputeTestMatchesStep
 from .summary import SummaryTrainDataset, SummaryValDataset, SummaryTestDataset
 from .embedding import ComputeImageEmbeddingStep, AggregatePlaceEmbeddingStep

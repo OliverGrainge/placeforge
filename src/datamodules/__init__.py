@@ -36,6 +36,12 @@ def get_datamodule(name: str, **kwargs: Any) -> Any:
     return dm_cls(**kwargs)
 
 
-from .datamodule import BaseDataModule, PlaceRecognitionTrainDataModule
+from .datamodule import BaseDataModule, PlaceRecognitionTrainDataModule, GradedSimilarityTrainDataModule
 
-__all__ = ["BaseDataModule", "PlaceRecognitionTrainDataModule", "get_datamodule", "register_datamodule"]
+__all__ = [
+    "BaseDataModule",
+    "PlaceRecognitionTrainDataModule",
+    "GradedSimilarityTrainDataModule",
+    "get_datamodule",
+    "register_datamodule",
+]
