@@ -1,0 +1,31 @@
+# Path to a standalone checkpoint (model weights, not a full Lightning ckpt).
+# Supports .ckpt, .pth, .pt files. Uses robust loading with automatic
+# prefix stripping/adding to match the model's keys.
+checkpoint: /home/oliver/github/EigenPlaces/logs/dinov2_gem/2026-03-31_17-01-32/best_model.pth
+
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+
+module:
+  name: curavpr
+  model_name: dinov2_gem          # dinov2_gem | dinov2_salad | dinov2_boq
+  val_recall_ks: [1, 5, 10]
+
+datamodule:
+  name: curavpr
+  train_dataset_name: sf_xl_curavpr
+  val_dataset_names: 
+    - pitts30k_val
+  test_dataset_names:
+    - pitts30k_test
+    - msls_val
+    - tokyo247_test 
+    - nordland_test
+    - svox_test
+  batch_size: 128
+  num_workers: 8
+  test_transform:
+    name: eval
+    image_size: 224

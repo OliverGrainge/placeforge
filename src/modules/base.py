@@ -65,7 +65,7 @@ class PlaceRecognitionModule(pl.LightningModule):
 
             name = val_names[dl_idx] if dl_idx < len(val_names) else str(dl_idx)
             for k, recall in recalls.items():
-                self.log(f"val/{name}/R@{k}", recall, prog_bar=(k == 1))
+                self.log(f"val/{name}/R@{k}", recall, prog_bar=(k == 1), add_dataloader_idx=False)
             if 1 in recalls and not np.isnan(recalls[1]):
                 r1_values.append(recalls[1])
 
@@ -119,7 +119,7 @@ class PlaceRecognitionModule(pl.LightningModule):
 
             name = test_names[dl_idx] if dl_idx < len(test_names) else str(dl_idx)
             for k, recall in recalls.items():
-                self.log(f"test/{name}/R@{k}", recall, prog_bar=(k == 1))
+                self.log(f"test/{name}/R@{k}", recall, prog_bar=(k == 1), add_dataloader_idx=False)
 
         self._test_store.clear()
 

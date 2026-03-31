@@ -15,10 +15,9 @@ _IMAGENET_STD = (0.229, 0.224, 0.225)
 
 @register_transform("train")
 class TrainTransform:
-    """Standard augmented transform for training.
+    """Augmented transform for contrastive VPR training.
 
-    Pipeline: Resize → RandomCrop → RandomHorizontalFlip → ColorJitter →
-              ToDtype → Normalize
+    Pipeline: RandomResizedCrop → ColorJitter → ToDtype → Normalize
     """
 
     def __init__(
@@ -27,7 +26,14 @@ class TrainTransform:
     ) -> None:
         self._transform = transforms.Compose(
             [
-                transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
+                transforms.RandomResizedCrop(
+                    (image_size, image_size),
+                    scale=(0.5, 1.0),
+                    interpolation=InterpolationMode.BILINEAR,
+                ),
+                transforms.ColorJitter(
+                    brightness=0.7, contrast=0.7, saturation=0.7, hue=0.2,
+                ),
                 transforms.ToDtype(torch.float32, scale=True),
                 transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
             ]
@@ -48,8 +54,7 @@ class EvalTransform:
         scale_size = int(image_size * 1.14)
         self._transform = transforms.Compose(
             [
-                transforms.Resize(scale_size, interpolation=InterpolationMode.BILINEAR),
-                transforms.CenterCrop(image_size),
+                transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
                 transforms.ToDtype(torch.float32, scale=True),
                 transforms.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD),
             ]

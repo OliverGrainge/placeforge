@@ -75,8 +75,8 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
         return loss
 
     def configure_optimizers(self):
-        if hasattr(self.model, "backbone"):
-            backbone_params = list(self.model.backbone.parameters())
+        if hasattr(self.model, "dino"):
+            backbone_params = list(self.model.dino.parameters())
             backbone_ids = {id(p) for p in backbone_params}
             head_params = [p for p in self.parameters() if id(p) not in backbone_ids]
             param_groups = [

@@ -42,6 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use best.ckpt instead of last.ckpt when loading from a directory",
     )
+    test_parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="Explicit path to a .ckpt file (overrides checkpoint resolution from path)",
+    )
     test_parser.set_defaults(handler=_handle_test)
 
     datapipeline_parser = subparsers.add_parser(
@@ -275,6 +281,97 @@ def _config_from_checkpoint_dir(ckpt_dir: Path) -> Path | None:
     return _CONFIGS_DIR / rel.with_suffix(".yaml")
 
 
+def _load_checkpoint_into_model(model: Any, ckpt_path: Path) -> None:
+    """Robustly load a checkpoint into *model* (not the Lightning module).
+
+    Strategy
+    --------
+    1. Load the file; if it contains a ``state_dict`` key, use that,
+       otherwise treat the whole dict as the state dict.
+    2. Detect and strip/add a systematic key prefix so that the checkpoint
+       keys align with ``model.state_dict()`` keys.  Common mismatches:
+       ``model.`` prefix from a Lightning module, ``module.`` from DDP, etc.
+    3. Fail **hard** if any of the model's keys are still missing after
+       alignment — we never silently ignore missing weights.
+    """
+    import torch
+
+    raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+    # --- 1. extract state dict -------------------------------------------
+    if isinstance(raw, dict) and "state_dict" in raw:
+        state_dict: dict[str, Any] = raw["state_dict"]
+    elif isinstance(raw, dict):
+        state_dict = raw
+    else:
+        raise ValueError(
+            f"Checkpoint at {ckpt_path} is not a dict and has no 'state_dict' key."
+        )
+
+    model_keys = set(model.state_dict().keys())
+    ckpt_keys = set(state_dict.keys())
+
+    # --- 2. try to align keys --------------------------------------------
+    # If keys already match, skip prefix detection.
+    if not model_keys <= ckpt_keys:
+        state_dict = _align_state_dict(state_dict, model_keys)
+        ckpt_keys = set(state_dict.keys())
+
+    # --- 3. strict check: every model key must be present ----------------
+    missing = model_keys - ckpt_keys
+    if missing:
+        raise RuntimeError(
+            f"Checkpoint is missing {len(missing)} model key(s) after alignment. "
+            f"First 10: {sorted(missing)[:10]}"
+        )
+
+    extra = ckpt_keys - model_keys
+    if extra:
+        print(f"  [checkpoint] Ignoring {len(extra)} extra key(s) not in model.")
+
+    model.load_state_dict({k: state_dict[k] for k in model_keys}, strict=True)
+    print(f"  [checkpoint] Loaded {len(model_keys)} parameters into model.")
+
+
+def _align_state_dict(
+    state_dict: dict[str, Any], model_keys: set[str],
+) -> dict[str, Any]:
+    """Try to fix a systematic prefix mismatch between *state_dict* and *model_keys*.
+
+    Handles cases like:
+    - ckpt has ``model.dino.blocks.0...`` but model expects ``dino.blocks.0...``
+    - ckpt has ``dino.blocks.0...`` but model expects ``model.dino.blocks.0...``
+    - ckpt has ``module.model.dino...`` (DDP wrapping) etc.
+    """
+    ckpt_keys = list(state_dict.keys())
+
+    # Pick a reference model key to detect the prefix relationship.
+    ref_model_key = min(model_keys)  # deterministic pick
+
+    # Case A: checkpoint keys have an extra prefix to strip.
+    for ckpt_key in ckpt_keys:
+        if ckpt_key.endswith(ref_model_key):
+            prefix = ckpt_key[: len(ckpt_key) - len(ref_model_key)]
+            # Verify this prefix explains most keys.
+            stripped = {k[len(prefix):]: v for k, v in state_dict.items() if k.startswith(prefix)}
+            if model_keys <= set(stripped.keys()):
+                print(f"  [checkpoint] Stripped prefix '{prefix}' from checkpoint keys.")
+                return stripped
+
+    # Case B: model keys have an extra prefix — checkpoint is "inner".
+    ref_ckpt_key = min(ckpt_keys)
+    for model_key in sorted(model_keys):
+        if model_key.endswith(ref_ckpt_key):
+            prefix = model_key[: len(model_key) - len(ref_ckpt_key)]
+            added = {prefix + k: v for k, v in state_dict.items()}
+            if model_keys <= set(added.keys()):
+                print(f"  [checkpoint] Added prefix '{prefix}' to checkpoint keys.")
+                return added
+
+    # No systematic fix found — return as-is and let the caller error out.
+    return state_dict
+
+
 def _handle_test(args: argparse.Namespace) -> int:
     import torch
     import pytorch_lightning as pl
@@ -287,15 +384,29 @@ def _handle_test(args: argparse.Namespace) -> int:
     # Resolve checkpoint file and config
     path_arg = args.path.resolve()
     ckpt_name = "best.ckpt" if args.best else "last.ckpt"
+    use_robust_load = False
 
-    if path_arg.suffix in (".yaml", ".yml"):
-        # User passed a config file — derive checkpoint dir from it
+    if args.checkpoint is not None:
+        # Explicit --checkpoint arg takes top priority
+        ckpt_file = args.checkpoint.resolve()
+        if path_arg.suffix in (".yaml", ".yml"):
+            config_path = path_arg
+        else:
+            config_path = args.config or _config_from_checkpoint_dir(ckpt_file.parent)
+        use_robust_load = True
+    elif path_arg.suffix in (".yaml", ".yml"):
+        # User passed a config file — check for checkpoint key inside it
         config_path = path_arg
         if not config_path.exists():
             print(f"Config not found: {config_path}")
             return 1
-        ckpt_dir = _checkpoint_dir(config_path)
-        ckpt_file = ckpt_dir / ckpt_name
+        _pre_config = yaml.safe_load(config_path.read_text())
+        if "checkpoint" in _pre_config:
+            ckpt_file = Path(_pre_config["checkpoint"]).expanduser().resolve()
+            use_robust_load = True
+        else:
+            ckpt_dir = _checkpoint_dir(config_path)
+            ckpt_file = ckpt_dir / ckpt_name
     elif path_arg.is_dir():
         ckpt_dir = path_arg
         ckpt_file = ckpt_dir / ckpt_name
@@ -311,7 +422,7 @@ def _handle_test(args: argparse.Namespace) -> int:
 
     if config_path is None or not config_path.exists():
         print(
-            f"Cannot infer config from {ckpt_dir}. "
+            f"Cannot infer config from {ckpt_file.parent}. "
             "Pass --config path/to/config.yaml explicitly."
         )
         return 1
@@ -339,11 +450,17 @@ def _handle_test(args: argparse.Namespace) -> int:
     print(f"Testing with checkpoint: {ckpt_file}")
 
     import torch
-    _orig_torch_load = torch.load
-    torch.load = lambda *a, **kw: _orig_torch_load(*a, **{**kw, "weights_only": False})
 
-    trainer = pl.Trainer(**trainer_kwargs)
-    trainer.test(module, datamodule=datamodule, ckpt_path=str(ckpt_file))
+    if use_robust_load:
+        # Robust manual loading: load directly into the model, not the lightning module
+        _load_checkpoint_into_model(module.model, ckpt_file)
+        trainer = pl.Trainer(**trainer_kwargs)
+        trainer.test(module, datamodule=datamodule)
+    else:
+        _orig_torch_load = torch.load
+        torch.load = lambda *a, **kw: _orig_torch_load(*a, **{**kw, "weights_only": False})
+        trainer = pl.Trainer(**trainer_kwargs)
+        trainer.test(module, datamodule=datamodule, ckpt_path=str(ckpt_file))
 
     return 0
 

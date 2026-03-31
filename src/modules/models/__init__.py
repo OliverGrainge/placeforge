@@ -40,11 +40,10 @@ __all__ = ["get_model", "register_model"]
 
 
 try:
-    from . import dinov2 as _dinov2
-except ModuleNotFoundError:
-    _dinov2 = None
+    from .dinov2 import DinoV2BoQ, DinoV2GeM, DinoV2SALAD
 
-try:
-    from . import resnet50 as _resnet50
+    _MODEL_REGISTRY["dinov2_gem"] = DinoV2GeM
+    _MODEL_REGISTRY["dinov2_salad"] = DinoV2SALAD
+    _MODEL_REGISTRY["dinov2_boq"] = DinoV2BoQ
 except ModuleNotFoundError:
-    _resnet50 = None
+    pass
