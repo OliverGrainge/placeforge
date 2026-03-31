@@ -87,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         help="Number of batches to save as figures (default: 3)",
     )
+    dataloader_parser.add_argument(
+        "--class-samples",
+        type=int,
+        default=5,
+        help="Number of random classes to visualise with all their images (default: 5, 0 to disable)",
+    )
     dataloader_parser.set_defaults(handler=_handle_dataloader)
 
     compare_parser = subparsers.add_parser(
@@ -343,36 +349,87 @@ def _handle_test(args: argparse.Namespace) -> int:
 
 
 def _print_dataset_summary(datamodule: Any) -> None:
+    import numpy as np
+
     train_ds = datamodule._train_dataset
     val_datasets = datamodule._val_datasets
     val_names = datamodule.val_dataset_names
 
-    num_images = train_ds.num_images if hasattr(train_ds, "num_images") else len(train_ds)
+    # Use _full_df when available (epoch-cycling datamodules like cosplace/eigenplaces
+    # only load one supergroup into _train_dataset at a time).
+    full_df = getattr(datamodule, "_full_df", None)
+
+    if full_df is not None:
+        num_images = len(full_df)
+    elif hasattr(train_ds, "num_images"):
+        num_images = train_ds.num_images
+    else:
+        num_images = len(train_ds)
 
     print()
     print("=" * 52)
     print(f"  Train: {datamodule.train_dataset_name}")
-    if hasattr(train_ds, "num_places"):
-        print(f"    places:      {train_ds.num_places:,}")
-    print(f"    images:      {num_images:,}")
-    if hasattr(train_ds, "num_supergroups"):
-        num_supergroups = train_ds.num_supergroups
-        sg_place_counts = list(train_ds.supergroup_num_places.values())
-        sg_min = min(sg_place_counts)
-        sg_max = max(sg_place_counts)
-        sg_mean = sum(sg_place_counts) / len(sg_place_counts)
-        print(f"    supergroups: {num_supergroups:,}")
-        print(f"    places/sg:   {sg_mean:.1f}  (min {sg_min}  max {sg_max})")
-    if getattr(datamodule, "dataset_type", None) == "classification":
-        print(f"    batch size:  {datamodule.batch_size:,}  (image-level)")
-    elif hasattr(train_ds, "images_per_place"):
-        images_per_place = train_ds.images_per_place
+    print(f"    images:       {num_images:,}")
+
+    if full_df is not None and "place_id" in full_df.columns:
+        num_places = full_df["place_id"].nunique()
+        print(f"    places:       {num_places:,}")
+        images_per_place = full_df.groupby("place_id").size()
         print(
-            f"    batch size:  {datamodule.batch_size * images_per_place:,}  "
-            f"({datamodule.batch_size} places × {images_per_place} images)"
+            f"    images/place: avg={images_per_place.mean():.1f}  "
+            f"min={images_per_place.min()}  max={images_per_place.max()}  "
+            f"std={images_per_place.std():.1f}"
+        )
+    elif hasattr(train_ds, "num_places"):
+        print(f"    places:       {train_ds.num_places:,}")
+        if hasattr(train_ds, "df"):
+            images_per_place = train_ds.df.groupby("place_id").size()
+            print(
+                f"    images/place: avg={images_per_place.mean():.1f}  "
+                f"min={images_per_place.min()}  max={images_per_place.max()}  "
+                f"std={images_per_place.std():.1f}"
+            )
+
+    if full_df is not None and "supergroup_id" in full_df.columns:
+        sg_ids = sorted(full_df["supergroup_id"].unique())
+        print(f"    supergroups:  {len(sg_ids)}")
+        if "place_id" in full_df.columns:
+            sg_place_counts = full_df.groupby("supergroup_id")["place_id"].nunique().values
+            print(
+                f"    places/sg:    avg={sg_place_counts.mean():.1f}  "
+                f"min={sg_place_counts.min()}  max={sg_place_counts.max()}  "
+                f"std={sg_place_counts.std():.1f}"
+            )
+        images_per_sg = full_df.groupby("supergroup_id").size().values
+        print(
+            f"    images/sg:    avg={images_per_sg.mean():.1f}  "
+            f"min={images_per_sg.min()}  max={images_per_sg.max()}  "
+            f"std={images_per_sg.std():.1f}"
+        )
+    elif hasattr(train_ds, "num_supergroups"):
+        print(f"    supergroups:  {train_ds.num_supergroups}")
+        sg_place_counts = np.array(list(train_ds.supergroup_num_places.values()))
+        print(
+            f"    places/sg:    avg={sg_place_counts.mean():.1f}  "
+            f"min={sg_place_counts.min()}  max={sg_place_counts.max()}  "
+            f"std={sg_place_counts.std():.1f}"
+        )
+        if hasattr(train_ds, "df") and "supergroup_id" in train_ds.df.columns:
+            images_per_sg = train_ds.df.groupby("supergroup_id").size().values
+            print(
+                f"    images/sg:    avg={images_per_sg.mean():.1f}  "
+                f"min={images_per_sg.min()}  max={images_per_sg.max()}  "
+                f"std={images_per_sg.std():.1f}"
+            )
+
+    if hasattr(train_ds, "images_per_place"):
+        images_per_place_k = train_ds.images_per_place
+        print(
+            f"    batch size:   {datamodule.batch_size * images_per_place_k:,}  "
+            f"({datamodule.batch_size} places × {images_per_place_k} images)"
         )
     else:
-        print(f"    batch size:  {datamodule.batch_size:,}")
+        print(f"    batch size:   {datamodule.batch_size:,}")
 
     for name, ds in zip(val_names, val_datasets):
         print(f"  Val: {name}")
@@ -412,6 +469,7 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
     import time
 
     import torch
+    import torchvision.io
     import numpy as np
 
     torch.set_float32_matmul_precision("high")
@@ -488,12 +546,24 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
                 fig.suptitle(f"batch {batch_idx}  |  {n_pairs} pairs", fontsize=10)
             else:
                 images = batch["images"]  # (B, C, H, W)
-                place_ids = batch.get("place_ids", batch.get("labels"))  # (B,)
+                # Find the class label tensor — key varies by datamodule
+                class_ids = None
+                for key in ("place_ids", "labels", "lat_labels"):
+                    if key in batch:
+                        class_ids = batch[key]
+                        class_key = key.removesuffix("s")
+                        break
                 sg_id = batch["supergroup_id"].item() if "supergroup_id" in batch else None
 
-                n_images = images.shape[0]
-                n_cols = min(n_images, 8)
-                n_rows = (n_images + n_cols - 1) // n_cols
+                # Group images by class so each row shows one class
+                unique_pids = class_ids.unique(sorted=True)
+                groups = []
+                for pid in unique_pids:
+                    mask = class_ids == pid
+                    groups.append((pid.item(), images[mask]))
+
+                n_cols = max(g[1].shape[0] for g in groups)
+                n_rows = len(groups)
 
                 fig, axes = plt.subplots(
                     n_rows, n_cols,
@@ -501,23 +571,21 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
                     squeeze=False,
                 )
 
-                for i in range(n_images):
-                    row, col = divmod(i, n_cols)
-                    ax = axes[row][col]
-                    img = images[i] * std + mean
-                    img = img.clamp(0, 1).permute(1, 2, 0).numpy()
-                    ax.imshow(img)
-                    ax.set_title(f"pid={place_ids[i].item()}", fontsize=7)
-                    ax.set_xticks([])
-                    ax.set_yticks([])
+                for row, (pid, group_imgs) in enumerate(groups):
+                    for col in range(group_imgs.shape[0]):
+                        ax = axes[row][col]
+                        img = group_imgs[col] * std + mean
+                        img = img.clamp(0, 1).permute(1, 2, 0).numpy()
+                        ax.imshow(img)
+                        ax.set_title(f"{class_key}={pid}", fontsize=7)
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                    for col in range(group_imgs.shape[0], n_cols):
+                        axes[row][col].set_visible(False)
 
-                for i in range(n_images, n_rows * n_cols):
-                    row, col = divmod(i, n_cols)
-                    axes[row][col].set_visible(False)
-
-                title = f"batch {batch_idx}  |  {n_images} images"
+                title = f"batch {batch_idx}  |  {images.shape[0]} images  |  {n_rows} places"
                 if sg_id is not None:
-                    title = f"batch {batch_idx}  |  supergroup {sg_id}  |  {n_images} images"
+                    title = f"batch {batch_idx}  |  supergroup {sg_id}  |  {images.shape[0]} images  |  {n_rows} places"
                 fig.suptitle(title, fontsize=10)
 
             fig.tight_layout()
@@ -525,6 +593,103 @@ def _handle_dataloader(args: argparse.Namespace) -> int:
             plt.close(fig)
 
         print(f"Saved {min(args.save_batches, batch_idx + 1)} batch figures to {output_dir}")
+
+    # ── Save per-class figures ──────────────────────────────────────────────
+    if args.class_samples > 0:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        class_dir = (
+            Path(os.environ["PLACEFORGE_PROCESSED_DIR"])
+            / "train"
+            / datamodule.train_dataset_name
+            / "class_samples"
+        )
+        class_dir.mkdir(parents=True, exist_ok=True)
+
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+
+        # Get the underlying dataset and its dataframe
+        ds = datamodule._train_dataset
+        full_df = getattr(datamodule, "_full_df", None)
+        df = full_df if full_df is not None else getattr(ds, "df", None)
+
+        if df is not None and "place_id" in df.columns:
+            rng = np.random.default_rng(42)
+            raw_dir = getattr(datamodule, "_raw_dir", None) or Path(
+                os.environ["PLACEFORGE_RAW_DIR"]
+            )
+            has_supergroups = "supergroup_id" in df.columns
+
+            if has_supergroups:
+                groups = df.groupby("supergroup_id")
+            else:
+                groups = [("all", df)]
+
+            total_saved = 0
+            for sg_id, sg_df in groups:
+                if has_supergroups:
+                    sg_dir = class_dir / f"supergroup_{sg_id}"
+                else:
+                    sg_dir = class_dir
+
+                sg_dir.mkdir(parents=True, exist_ok=True)
+
+                all_place_ids = sg_df["place_id"].unique()
+                chosen = rng.choice(
+                    all_place_ids,
+                    size=min(args.class_samples, len(all_place_ids)),
+                    replace=False,
+                )
+
+                for pid in chosen:
+                    subset = sg_df[sg_df["place_id"] == pid]
+                    image_paths = subset["image_path"].tolist()
+                    n_imgs = len(image_paths)
+                    n_cols = min(n_imgs, 8)
+                    n_rows = (n_imgs + n_cols - 1) // n_cols
+
+                    fig, axes = plt.subplots(
+                        n_rows, n_cols,
+                        figsize=(n_cols * 2.5, n_rows * 2.5),
+                        squeeze=False,
+                    )
+
+                    for i, img_path in enumerate(image_paths):
+                        row, col = divmod(i, n_cols)
+                        ax = axes[row][col]
+                        img = torchvision.io.read_image(
+                            str(raw_dir / img_path),
+                            mode=torchvision.io.ImageReadMode.RGB,
+                        )
+                        if datamodule.train_transform is not None:
+                            img = datamodule.train_transform(img)
+                        img = img * std + mean
+                        img = img.clamp(0, 1).permute(1, 2, 0).numpy()
+                        ax.imshow(img)
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+
+                    for i in range(n_imgs, n_rows * n_cols):
+                        row, col = divmod(i, n_cols)
+                        axes[row][col].set_visible(False)
+
+                    title = f"place_id={pid}  |  {n_imgs} images"
+                    if has_supergroups:
+                        title = f"supergroup={sg_id}  |  place_id={pid}  |  {n_imgs} images"
+                    fig.suptitle(title, fontsize=10)
+                    fig.tight_layout()
+                    fig.savefig(sg_dir / f"place_{pid}.png", dpi=100, bbox_inches="tight")
+                    plt.close(fig)
+
+                total_saved += len(chosen)
+
+            print(f"Saved {total_saved} class sample figures to {class_dir}")
+        else:
+            print("Skipping class samples: no place_id column found in dataset")
 
     # ── Measure throughput ───────────────────────────────────────────────────
     from tqdm import tqdm

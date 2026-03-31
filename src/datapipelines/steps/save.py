@@ -27,12 +27,13 @@ class SaveTrainDataset(BaseStep):
 
         df = context["traindataset"].copy()
 
-        # Remap place_id to be sequential (0..n_places-1) within each supergroup_id
-        place_df = df[["supergroup_id", "place_id"]].drop_duplicates("place_id")
-        place_df = place_df.sort_values(["supergroup_id", "place_id"])
-        place_df["local_place_id"] = place_df.groupby("supergroup_id").cumcount()
-        old_to_local = place_df.set_index("place_id")["local_place_id"]
-        df["place_id"] = df["place_id"].map(old_to_local).astype(np.int64)
+        # Remap place_id to be sequential (0..n_places-1) within each supergroup
+        if "supergroup_id" in df.columns:
+            place_df = df[["supergroup_id", "place_id"]].drop_duplicates("place_id")
+            place_df = place_df.sort_values(["supergroup_id", "place_id"])
+            place_df["local_place_id"] = place_df.groupby("supergroup_id").cumcount()
+            old_to_local = place_df.set_index("place_id")["local_place_id"]
+            df["place_id"] = df["place_id"].map(old_to_local).astype(np.int64)
 
         df.to_parquet(output_path)
 

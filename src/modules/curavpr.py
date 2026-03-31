@@ -12,8 +12,8 @@ from .models import get_model
 from pytorch_metric_learning import losses, miners
 
 
-@register_module("contrastive")
-class ContrastiveLightningModule(PlaceRecognitionModule):
+@register_module("curavpr")
+class CuraVPRLightningModule(PlaceRecognitionModule):
     def __init__(
         self,
         *,
@@ -112,4 +112,4 @@ class ContrastiveLightningModule(PlaceRecognitionModule):
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
 
 
-__all__ = ["ContrastiveLightningModule"]
+__all__ = ["CuraVPRLightningModule"]

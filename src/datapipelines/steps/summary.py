@@ -41,17 +41,23 @@ class SummaryTrainDataset(BaseStep):
             },
             "num_images": len(df),
             "num_places": int(df["place_id"].nunique()),
-            "num_supergroups": int(df["supergroup_id"].nunique()),
+            "num_supergroups": int(df["supergroup_id"].nunique()) if "supergroup_id" in df.columns else 0,
             "images_per_place": {
                 "mean": float(df.groupby("place_id").size().mean()),
                 "min": int(df.groupby("place_id").size().min()),
                 "max": int(df.groupby("place_id").size().max()),
                 "median": float(df.groupby("place_id").size().median()),
             },
-            "supergroups": {
-                "supergroup_" + str(supergroup_id): place_stats(group_df)
-                for supergroup_id, group_df in df.groupby("supergroup_id")
-            },
+            **(
+                {
+                    "supergroups": {
+                        "supergroup_" + str(supergroup_id): place_stats(group_df)
+                        for supergroup_id, group_df in df.groupby("supergroup_id")
+                    }
+                }
+                if "supergroup_id" in df.columns
+                else {}
+            ),
         }
 
         output_path.write_text(json.dumps(summary, indent=2))

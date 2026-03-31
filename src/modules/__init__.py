@@ -44,16 +44,6 @@ __all__ = ["get_module", "get_transform", "models", "register_module", "transfor
 
 
 try:
-    from . import contrastive as _contrastive
+    from . import curavpr as _curavpr
 except ModuleNotFoundError:
-    _contrastive = None
-
-try:
-    from . import classification as _classification
-except ModuleNotFoundError:
-    _classification = None
-
-try:
-    from . import graded as _graded
-except ModuleNotFoundError:
-    _graded = None
+    _curavpr = None
