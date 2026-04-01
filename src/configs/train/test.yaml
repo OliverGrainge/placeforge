@@ -35,13 +35,15 @@ datamodule:
   fraction: 0.02
   val_dataset_names:
     - pitts30k_val
-    - pitts30k_test
   test_dataset_names:
-    - pitts30k_val
     - pitts30k_test
+    - msls_val
+    - tokyo247_test
+    - nordland_test
+    - svox_test
   batch_size: 8
   images_per_place: 4
-  num_workers: 2
+  num_workers: 16
   transform:
     name: train
     image_size: 224

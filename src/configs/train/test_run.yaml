@@ -43,7 +43,7 @@ datamodule:
     - svox_test
   batch_size: 8
   images_per_place: 4
-  num_workers: 2
+  num_workers: 16
   transform:
     name: train
     image_size: 224

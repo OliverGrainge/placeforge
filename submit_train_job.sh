@@ -2,8 +2,8 @@
 #SBATCH --job-name=placeforge_train
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --partition=a100
-#SBATCH --gres=gpu:a100:1
+#SBATCH --partition=a100,swarm_a100,swarm_h100
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=128G
 #SBATCH --time=48:00:00
