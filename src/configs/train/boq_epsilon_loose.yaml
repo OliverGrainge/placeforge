@@ -1,46 +1,40 @@
 logger:
-  - type: wandb
-    project: placeforge_curavpr
-    name: dinov2_gem
-  - type: csv
-    name: csv_logs
+  name: boq_epsilon_loose
 
 trainer:
-  max_steps: 10000
+  max_steps: 30000
   max_epochs: -1
   accelerator: gpu
   devices: 1
   precision: 16-mixed
   log_every_n_steps: 10
-  val_check_interval: 1000
+  val_check_interval: 2500
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0
 
 compile: false
 
 module:
-  name: curavpr
-  model_name: dinov2_gem
+  model_name: dinov2_boq
   model_kwargs:
     use_checkpointing: false
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 200
-  backbone_lr_scale: 0.3
+  warmup_steps: 500
+  backbone_lr_scale: 0.1
   lr_schedule: cosine
   val_recall_ks: [1, 5]
+  miner_epsilon: 0.2
 
 datamodule:
-  name: curavpr
   train_dataset_name: sf_xl_curavpr
   fraction: 1.0
   val_dataset_names:
     - pitts30k_val
-    - msls_val
   test_dataset_names:
     - pitts30k_test
     - msls_val
-    - tokyo247_test 
+    - tokyo247_test
     - nordland_test
     - svox_test
   batch_size: 128
@@ -49,6 +43,7 @@ datamodule:
   transform:
     name: train
     image_size: 224
+    augmentation: heavy
   val_transform:
     name: eval
     image_size: 224

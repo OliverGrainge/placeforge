@@ -11,7 +11,6 @@ dependencies = [
     "PyYAML",
     "tqdm",
     "python-dotenv",
-    "shapely>=2.0",
     # Dataset loading and visualization
     "Pillow",
     "matplotlib",
@@ -22,7 +21,7 @@ dependencies = [
     "pytorch-metric-learning",
     "torchmetrics",
     "lightning_utilities",
-    "wandb",
+    "tensorboard",
     "faiss-cpu",
 ]
 

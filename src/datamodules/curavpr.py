@@ -6,12 +6,10 @@ from typing import Any, List
 import torch
 from torch.utils.data import DataLoader
 
-from . import register_datamodule
 from .datamodule import BaseDataModule, _dataloader_worker_init_fn
 from .datasets import ContrastiveTrainDataset, subsample_geographic
 
 
-@register_datamodule("curavpr")
 class CuraVPRTrainDataModule(BaseDataModule):
     def __init__(
         self,

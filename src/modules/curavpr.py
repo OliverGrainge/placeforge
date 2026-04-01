@@ -6,13 +6,17 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from . import register_module
 from .base import PlaceRecognitionModule
-from .models import get_model
+from .models.dinov2 import DinoV2GeM, DinoV2SALAD, DinoV2BoQ
 from pytorch_metric_learning import losses, miners
 
+_MODELS = {
+    "dinov2_gem": DinoV2GeM,
+    "dinov2_salad": DinoV2SALAD,
+    "dinov2_boq": DinoV2BoQ,
+}
 
-@register_module("curavpr")
+
 class CuraVPRLightningModule(PlaceRecognitionModule):
     def __init__(
         self,
@@ -37,7 +41,10 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
             raise ValueError(f"lr_schedule must be 'cosine' or 'constant', got '{lr_schedule}'")
 
         self.save_hyperparameters()
-        self.model = get_model(model_name, **(model_kwargs or {}))
+        model_cls = _MODELS.get(model_name)
+        if model_cls is None:
+            raise ValueError(f"Unknown model {model_name!r}. Available: {list(_MODELS)}")
+        self.model = model_cls(**(model_kwargs or {}))
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps

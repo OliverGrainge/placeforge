@@ -1,0 +1,56 @@
+# Short smoke run: small step budget, subsampled train data, capped val/test batches.
+logger:
+  name: test_run
+
+trainer:
+  max_steps: 48
+  max_epochs: -1
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  log_every_n_steps: 4
+  val_check_interval: 24
+  check_val_every_n_epoch: null
+  gradient_clip_val: 1.0
+
+compile: false
+
+module:
+  model_name: dinov2_boq
+  model_kwargs:
+    use_checkpointing: false
+    unfreeze_n_blocks: 4
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  warmup_steps: 12
+  backbone_lr_scale: 0.1
+  lr_schedule: cosine
+  val_recall_ks: [1, 5]
+  miner_epsilon: 0.1
+
+datamodule:
+  train_dataset_name: sf_xl_curavpr
+  fraction: 0.02
+  val_dataset_names:
+    - pitts30k_test
+    - tokyo247_test
+    - nordland_test
+  test_dataset_names:
+    - pitts30k_test
+    - msls_val
+    - tokyo247_test 
+    - nordland_test
+    - svox_test
+  batch_size: 8
+  images_per_place: 4
+  num_workers: 2
+  transform:
+    name: train
+    image_size: 224
+    augmentation: heavy
+  val_transform:
+    name: eval
+    image_size: 224
+  test_transform:
+    name: eval
+    image_size: 224

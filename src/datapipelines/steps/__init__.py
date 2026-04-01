@@ -6,4 +6,3 @@ from .matches import ComputeValMatchesStep, ComputeTestMatchesStep
 from .summary import SummaryTrainDataset, SummaryValDataset, SummaryTestDataset
 from .embedding import ComputeImageEmbeddingStep, AggregatePlaceEmbeddingStep
 from .analyse import AnalyseTrainDatasetStep
-from .subsample import SubsampleGeographicStep

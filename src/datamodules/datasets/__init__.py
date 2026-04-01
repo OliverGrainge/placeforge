@@ -1,9 +1,12 @@
 from .train import ContrastiveTrainDataset, subsample_geographic
-from .val import ValDataset
-from .test import TestDataset
+from .eval import EvalDataset
+
+ValDataset = EvalDataset
+TestDataset = EvalDataset
 
 __all__ = [
     "ContrastiveTrainDataset",
+    "EvalDataset",
     "ValDataset",
     "TestDataset",
 ]

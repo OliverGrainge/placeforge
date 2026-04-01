@@ -42,16 +42,17 @@ class DinoV2GeM(nn.Module):
     _UNFREEZE_N_BLOCKS = 4
     _BACKBONE_DIM = 768
 
-    def __init__(self, *, descriptor_dim: int = 2048, use_checkpointing: bool = True) -> None:
+    def __init__(self, *, descriptor_dim: int = 2048, use_checkpointing: bool = True, unfreeze_n_blocks: int = 4) -> None:
         super().__init__()
         self.descriptor_dim = descriptor_dim
         self.use_checkpointing = use_checkpointing
+        self._unfreeze_n_blocks = unfreeze_n_blocks
 
         # ── backbone ──────────────────────────────────────────────────────
         self.dino = torch.hub.load("facebookresearch/dinov2", self._BACKBONE_NAME)
         for param in self.dino.parameters():
             param.requires_grad_(False)
-        for block in self.dino.blocks[-self._UNFREEZE_N_BLOCKS :]:
+        for block in self.dino.blocks[-self._unfreeze_n_blocks :]:
             for param in block.parameters():
                 param.requires_grad_(True)
 
@@ -77,10 +78,10 @@ class DinoV2GeM(nn.Module):
 
         with torch.no_grad():
             x = self.dino.prepare_tokens_with_masks(x)
-            for blk in self.dino.blocks[: -self._UNFREEZE_N_BLOCKS]:
+            for blk in self.dino.blocks[: -self._unfreeze_n_blocks]:
                 x = blk(x)
 
-        for blk in self.dino.blocks[-self._UNFREEZE_N_BLOCKS :]:
+        for blk in self.dino.blocks[-self._unfreeze_n_blocks :]:
             if self.use_checkpointing:
                 x = checkpoint(blk, x, use_reentrant=False)
             else:
@@ -142,18 +143,20 @@ class DinoV2SALAD(nn.Module):
         token_dim: int = 256,
         dropout: float = 0.3,
         use_checkpointing: bool = True,
+        unfreeze_n_blocks: int = 4,
     ) -> None:
         super().__init__()
         self.descriptor_dim = num_clusters * cluster_dim + token_dim
         self.use_checkpointing = use_checkpointing
         self.num_clusters = num_clusters
         self.cluster_dim = cluster_dim
+        self._unfreeze_n_blocks = unfreeze_n_blocks
 
         # ── backbone ──────────────────────────────────────────────────────
         self.dino = torch.hub.load("facebookresearch/dinov2", self._BACKBONE_NAME)
         for param in self.dino.parameters():
             param.requires_grad_(False)
-        for block in self.dino.blocks[-self._UNFREEZE_N_BLOCKS :]:
+        for block in self.dino.blocks[-self._unfreeze_n_blocks :]:
             for param in block.parameters():
                 param.requires_grad_(True)
 
@@ -195,10 +198,10 @@ class DinoV2SALAD(nn.Module):
 
         with torch.no_grad():
             x = self.dino.prepare_tokens_with_masks(x)
-            for blk in self.dino.blocks[: -self._UNFREEZE_N_BLOCKS]:
+            for blk in self.dino.blocks[: -self._unfreeze_n_blocks]:
                 x = blk(x)
 
-        for blk in self.dino.blocks[-self._UNFREEZE_N_BLOCKS :]:
+        for blk in self.dino.blocks[-self._unfreeze_n_blocks :]:
             if self.use_checkpointing:
                 x = checkpoint(blk, x, use_reentrant=False)
             else:
@@ -320,16 +323,18 @@ class DinoV2BoQ(nn.Module):
         num_layers: int = 2,
         row_dim: int = 32,
         use_checkpointing: bool = True,
+        unfreeze_n_blocks: int = 4,
     ) -> None:
         super().__init__()
         self.descriptor_dim = proj_channels * row_dim
         self.use_checkpointing = use_checkpointing
+        self._unfreeze_n_blocks = unfreeze_n_blocks
 
         # ── backbone ──────────────────────────────────────────────────────
         self.dino = torch.hub.load("facebookresearch/dinov2", self._BACKBONE_NAME)
         for param in self.dino.parameters():
             param.requires_grad_(False)
-        for block in self.dino.blocks[-self._UNFREEZE_N_BLOCKS :]:
+        for block in self.dino.blocks[-self._unfreeze_n_blocks :]:
             for param in block.parameters():
                 param.requires_grad_(True)
 
@@ -361,10 +366,10 @@ class DinoV2BoQ(nn.Module):
 
         with torch.no_grad():
             x = self.dino.prepare_tokens_with_masks(x)
-            for blk in self.dino.blocks[: -self._UNFREEZE_N_BLOCKS]:
+            for blk in self.dino.blocks[: -self._unfreeze_n_blocks]:
                 x = blk(x)
 
-        for blk in self.dino.blocks[-self._UNFREEZE_N_BLOCKS :]:
+        for blk in self.dino.blocks[-self._unfreeze_n_blocks :]:
             if self.use_checkpointing:
                 x = checkpoint(blk, x, use_reentrant=False)
             else:

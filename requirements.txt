@@ -15,5 +15,5 @@ pytorch-lightning
 pytorch-metric-learning
 torchmetrics
 lightning_utilities
-wandb
+tensorboard
 faiss-cpu

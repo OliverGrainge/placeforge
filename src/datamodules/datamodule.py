@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
 
-from .datasets import ValDataset, TestDataset
+from .datasets import EvalDataset
 
 
 def _dataloader_worker_init_fn(_worker_id: int) -> None:
@@ -46,24 +46,22 @@ class BaseDataModule(pl.LightningDataModule):
         self.test_dataset_names = test_dataset_names or []
         self.test_transform = test_transform
 
-        self._val_datasets: List[ValDataset] = []
-        self._test_datasets: List[TestDataset] = []
+        self._val_datasets: List[EvalDataset] = []
+        self._test_datasets: List[EvalDataset] = []
 
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
             self._val_datasets = [
-                ValDataset(name, transform=self.val_transform)
+                EvalDataset(name, transform=self.val_transform)
                 for name in self.val_dataset_names
             ]
         if stage in (None, "test"):
-            self._test_datasets = []
-            for name in self.test_dataset_names:
-                try:
-                    self._test_datasets.append(TestDataset(name, transform=self.test_transform))
-                except FileNotFoundError:
-                    self._test_datasets.append(ValDataset(name, transform=self.test_transform))
+            self._test_datasets = [
+                EvalDataset(name, transform=self.test_transform)
+                for name in self.test_dataset_names
+            ]
 
-    def _eval_dataloader(self, ds: ValDataset | TestDataset) -> DataLoader:
+    def _eval_dataloader(self, ds: EvalDataset) -> DataLoader:
         workers = max(1, self.num_workers // 2)
         return DataLoader(
             ds,
