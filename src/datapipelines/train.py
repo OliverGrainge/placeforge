@@ -149,7 +149,7 @@ def build_sf_xl_small_curavpr_con() -> Pipeline:
 
 @register_pipeline("sf_xl_small_cosin_15", category="train")
 def build_sf_xl_small_curavpr_con() -> Pipeline:
-    name = "sf_xl_small_cosin_00"
+    name = "sf_xl_small_cosin_15"
     return Pipeline(
         name,
         steps=[
@@ -184,9 +184,9 @@ def build_sf_xl_small_curavpr_con() -> Pipeline:
 
 
 
-@register_pipeline("sf_xl_small_cosin_03", category="train")
+@register_pipeline("sf_xl_small_cosin_30", category="train")
 def build_sf_xl_small_curavpr_con() -> Pipeline:
-    name = "sf_xl_small_cosin_00"
+    name = "sf_xl_small_cosin_03"
     return Pipeline(
         name,
         steps=[
