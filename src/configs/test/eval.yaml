@@ -22,7 +22,7 @@ datamodule:
     - tokyo247_test 
     - nordland_test
     - svox_test
-  batch_size: 128
+  batch_size: 32
   num_workers: 8
   test_transform:
     name: eval

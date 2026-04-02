@@ -1,44 +1,44 @@
-# Short smoke run: small step budget, subsampled train data, capped val/test batches.
 logger:
-  name: test_gsvcities
+  name: sf_xl_salad
 
 trainer:
-  max_steps: 500
+  max_steps: 50000
   max_epochs: -1
   accelerator: gpu
   devices: 1
   precision: 16-mixed
-  log_every_n_steps: 4
-  val_check_interval: 1000
+  log_every_n_steps: 10
+  val_check_interval: 2500
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0
-
 
 compile: false
 
 module:
-  model_name: dinov2_gem
+  model_name: dinov2_salad
   model_kwargs:
     use_checkpointing: false
-    unfreeze_n_blocks: 2
+    unfreeze_n_blocks: 6
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 25
+  warmup_steps: 1000
   backbone_lr_scale: 0.1
-  lr_schedule: constant
+  lr_schedule: cosine
   val_recall_ks: [1, 5]
-  miner_epsilon: 0.1
+  miner_epsilon: 0.05
 
 datamodule:
-  train_dataset_name: gsvcities_curavpr
-  #source_sample_weights:
- #   sf_xl_small: 0.5
-  #  gsvcities: 0.5
+  train_dataset_name: sf_xl_curavpr
+  fraction: 1.0
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:
     - pitts30k_test
-  batch_size: 32
+    - msls_val
+    - tokyo247_test
+    - nordland_test
+    - svox_test
+  batch_size: 128
   images_per_place: 4
   num_workers: 16
   transform:
