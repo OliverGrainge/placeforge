@@ -218,7 +218,37 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
 
         df["place_id"] = df["place_id"].astype(np.int64)
 
-        # --- Embedding-based coherence filtering (all places) -------------
+        # --- Ensure cell coordinates exist for ALL rows -------------------
+        # Rows that went through _assign_place_ids already have cell_x/y(/h).
+        # Pre-assigned rows (e.g. GSV-Cities) may still be missing them.
+        if "cell_x" not in df.columns:
+            df["cell_x"] = np.nan
+        if "cell_y" not in df.columns:
+            df["cell_y"] = np.nan
+        missing_cells = df["cell_x"].isna()
+        if missing_cells.any():
+            df.loc[missing_cells, "cell_x"] = (
+                df.loc[missing_cells, "utm_east"] / self.cell_size_meters
+            ).apply(floor)
+            df.loc[missing_cells, "cell_y"] = (
+                df.loc[missing_cells, "utm_north"] / self.cell_size_meters
+            ).apply(floor)
+        if self.use_heading:
+            if "cell_h" not in df.columns:
+                df["cell_h"] = np.nan
+            missing_h = df["cell_h"].isna()
+            if missing_h.any():
+                df.loc[missing_h, "cell_h"] = (
+                    df.loc[missing_h, "heading"] / self.heading_size_degrees
+                ).apply(floor)
+
+        # --- Embedding-based coherence filtering (assigned places only) ----
+        # Places that arrived with a pre-existing place_id (e.g. GSV-Cities)
+        # are trusted and kept without filtering.
+        pre_assigned_places = set(
+            df.loc[~needs_assignment, "place_id"].unique()
+        )
+
         image_embs, image_index = _load_image_embeddings(self.image_cache, df)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         groups = _build_groups(df, image_index)
@@ -229,6 +259,17 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
         keep_mask = np.ones(len(df), dtype=bool)
 
         for df_indices, image_rows in groups:
+            place_id = df.iloc[df_indices[0]]["place_id"]
+
+            if place_id in pre_assigned_places:
+                # Skip coherence filtering but still enforce min_images.
+                if len(image_rows) < self.min_images:
+                    for idx in df_indices:
+                        keep_mask[idx] = False
+                if self.pbar is not None:
+                    self.pbar.update(1)
+                continue
+
             dropped = self._filter_place(image_embs[image_rows], device)
             n_surviving = len(image_rows) - len(dropped)
 

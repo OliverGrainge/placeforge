@@ -18,7 +18,6 @@ MSLS_PATH = "msls"
 NORDLAND_PATH = "nordland"
 SVOX_PATH = "svox"
 
-
 @register_pipeline("pitts30k_val", category="val")
 def build_pitts30k_pipeline() -> Pipeline:
     PIPELINE_NAME = "pitts30k_val"

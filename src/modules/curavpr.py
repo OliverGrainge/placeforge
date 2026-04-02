@@ -8,12 +8,14 @@ from torch import Tensor
 
 from .base import PlaceRecognitionModule
 from .models.dinov2 import DinoV2GeM, DinoV2SALAD, DinoV2BoQ
+from .models.resnet import ResNet18GeM
 from pytorch_metric_learning import losses, miners
 
 _MODELS = {
     "dinov2_gem": DinoV2GeM,
     "dinov2_salad": DinoV2SALAD,
     "dinov2_boq": DinoV2BoQ,
+    "resnet18_gem": ResNet18GeM,
 }
 
 
@@ -82,8 +84,11 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
         return loss
 
     def configure_optimizers(self):
-        if hasattr(self.model, "dino"):
-            backbone_params = list(self.model.dino.parameters())
+        # Detect the backbone sub-module for differential learning rates.
+        # DINOv2 models use "dino"; ResNet models use "backbone".
+        backbone_module = getattr(self.model, "dino", None) or getattr(self.model, "backbone", None)
+        if backbone_module is not None:
+            backbone_params = list(backbone_module.parameters())
             backbone_ids = {id(p) for p in backbone_params}
             head_params = [p for p in self.parameters() if id(p) not in backbone_ids]
             param_groups = [

@@ -111,6 +111,43 @@ def build_sf_xl_small_curavpr_con() -> Pipeline:
 
 
 
+
+@register_pipeline("gsvcities_curavpr", category="train")
+def build_sf_xl_small_gsvcities_curavpr() -> Pipeline:
+    name = "gsvcities_curavpr"
+    return Pipeline(
+        name,
+        steps=[
+            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ComputeImageEmbeddingStep(
+                image_embedding_name="gsvcities", batch_size=32, num_workers=8
+            ),
+            AssignCuraVPRPlaceIdStep(
+                image_embedding_name="gsvcities",
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.1,
+                min_images=4,
+            ),
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name="gsvcities",
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=512, #1024,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
 @register_pipeline("sf_xl_small_gsvcities_curavpr", category="train")
 def build_sf_xl_small_gsvcities_curavpr() -> Pipeline:
     name = "sf_xl_small_gsvcities_curavpr"
@@ -120,7 +157,7 @@ def build_sf_xl_small_gsvcities_curavpr() -> Pipeline:
             ReadTrainImagesStep(data_root=raw_dir() / SF_XL_SMALL_PATH / "small" / "train" / "37.70", source="sf_xl_small"),
             ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities", cities=["PRG"]),
             ComputeImageEmbeddingStep(
-                image_embedding_name="sf_xl_small_gsvcities", batch_size=128, num_workers=8
+                image_embedding_name="sf_xl_small_gsvcities", batch_size=16, num_workers=8
             ),
             AssignCuraVPRPlaceIdStep(
                 image_embedding_name="sf_xl_small_gsvcities",

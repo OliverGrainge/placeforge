@@ -156,34 +156,77 @@ class AnalyseTrainDatasetStep(BaseStep):
                 "std": float(images_per_sg.std()),
             }
 
+        if "source" in df.columns:
+            source_stats = {}
+            for source, source_df in df.groupby("source"):
+                src_ipp = source_df.groupby("place_id").size()
+                entry: dict[str, Any] = {
+                    "num_images": int(len(source_df)),
+                    "num_places": int(source_df["place_id"].nunique()),
+                    "pct_images": float(len(source_df) / num_images * 100),
+                    "pct_places": float(source_df["place_id"].nunique() / num_places * 100),
+                    "images_per_place": {
+                        "mean": float(src_ipp.mean()),
+                        "median": float(src_ipp.median()),
+                        "min": int(src_ipp.min()),
+                        "max": int(src_ipp.max()),
+                        "std": float(src_ipp.std()) if len(src_ipp) > 1 else 0.0,
+                    },
+                }
+                if "supergroup_id" in source_df.columns:
+                    entry["num_supergroups"] = int(source_df["supergroup_id"].nunique())
+                source_stats[str(source)] = entry
+            stats["sources"] = source_stats
+
         return stats
 
     @staticmethod
     def _print_stats(stats: dict[str, Any]) -> None:
+        W = 60
         print()
-        print("=" * 52)
-        print("  Train Dataset Analysis")
-        print(f"    images:  {stats['num_images']:,}")
-        print(f"    places:  {stats['num_places']:,}")
+        print("=" * W)
+        print("  Train Dataset Summary")
+        print("-" * W)
+        print(f"    images:       {stats['num_images']:>8,}")
+        print(f"    places:       {stats['num_places']:>8,}")
         ipp = stats["images_per_place"]
         print(
-            f"    images/place:  avg={ipp['mean']:.1f}  "
+            f"    images/place: avg={ipp['mean']:.1f}  "
             f"min={ipp['min']}  max={ipp['max']}  "
             f"std={ipp['std']:.1f}"
         )
         if "num_supergroups" in stats:
-            print(f"    supergroups:  {stats['num_supergroups']:,}")
+            print(f"    supergroups:  {stats['num_supergroups']:>8,}")
             pps = stats["places_per_supergroup"]
             print(
-                f"    places/sg:  avg={pps['mean']:.1f}  "
+                f"    places/sg:    avg={pps['mean']:.1f}  "
                 f"min={pps['min']}  max={pps['max']}  "
                 f"std={pps['std']:.1f}"
             )
             ips = stats["images_per_supergroup"]
             print(
-                f"    images/sg:  avg={ips['mean']:.1f}  "
+                f"    images/sg:    avg={ips['mean']:.1f}  "
                 f"min={ips['min']}  max={ips['max']}  "
                 f"std={ips['std']:.1f}"
             )
-        print("=" * 52)
+
+        if "sources" in stats:
+            print("-" * W)
+            print("  Per-Source Breakdown")
+            print("-" * W)
+            # Header
+            print(
+                f"    {'source':<20} {'images':>8} {'places':>8} "
+                f"{'%img':>6} {'%plc':>6} {'img/plc':>8}"
+            )
+            print(f"    {'-'*20} {'-'*8} {'-'*8} {'-'*6} {'-'*6} {'-'*8}")
+            for src_name, src in stats["sources"].items():
+                src_ipp = src["images_per_place"]
+                print(
+                    f"    {src_name:<20} {src['num_images']:>8,} {src['num_places']:>8,} "
+                    f"{src['pct_images']:>5.1f}% {src['pct_places']:>5.1f}% "
+                    f"{src_ipp['mean']:>7.1f}"
+                )
+
+        print("=" * W)
         print()

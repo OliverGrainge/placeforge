@@ -58,6 +58,24 @@ class SummaryTrainDataset(BaseStep):
                 if "supergroup_id" in df.columns
                 else {}
             ),
+            **(
+                {
+                    "sources": {
+                        str(source): {
+                            **place_stats(source_df),
+                            "pct_images": float(len(source_df) / len(df) * 100),
+                            "pct_places": float(
+                                source_df["place_id"].nunique()
+                                / df["place_id"].nunique()
+                                * 100
+                            ),
+                        }
+                        for source, source_df in df.groupby("source")
+                    }
+                }
+                if "source" in df.columns
+                else {}
+            ),
         }
 
         output_path.write_text(json.dumps(summary, indent=2))

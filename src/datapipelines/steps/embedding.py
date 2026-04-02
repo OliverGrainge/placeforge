@@ -160,7 +160,7 @@ class AggregatePlaceEmbeddingStep(BaseStep):
         image_embedding_name: str,
         place_embedding_name: str,
         reduction: Literal["mean"] = "mean",
-        normalize: bool = False,
+        normalize: bool = True,
     ) -> None:
         super().__init__()
         feature_store = Path(os.environ["PLACEFORGE_FEATURE_STORE_DIR"])
