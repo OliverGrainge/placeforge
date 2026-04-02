@@ -119,15 +119,20 @@ def _normalize(embeddings: np.ndarray, device: torch.device) -> torch.Tensor:
 class AssignCuraVPRPlaceIdStep(BaseStep):
     """Assign place IDs on a UTM grid, then remove incoherent images.
 
-    Within each place, images are iteratively removed if their mean cosine
-    similarity to the other images in the place falls below
-    ``cos_sim_threshold``.  Places that end up with fewer than
-    ``min_images`` survivors are removed entirely.
+    Rows that already carry a ``place_id`` (e.g. from GSV-Cities) keep it.
+    Rows without one are assigned a new ID via spatial/orientation
+    quantisation, offset so that no new ID collides with any existing one.
+
+    Within every place (pre-existing or newly assigned), images are
+    iteratively removed if their mean cosine similarity to the other images
+    in the place falls below ``cos_sim_threshold``.  Places that end up with
+    fewer than ``min_images`` survivors are removed entirely.
 
     Parameters
     ----------
     image_embedding_name:
-        Sub-directory name under ``$PLACEFORGE_FEATURE_STORE_DIR/embedding/image/``.
+        Sub-directory name under
+        ``$PLACEFORGE_FEATURE_STORE_DIR/embedding/image/``.
     cell_size_meters:
         Side length of the square spatial cells in metres.
     cos_sim_threshold:
@@ -135,6 +140,11 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
         are iteratively dropped.
     min_images:
         Places with fewer surviving images than this are discarded.
+    use_heading:
+        Whether to include heading in the quantisation grid for rows that
+        need a place ID assigned.
+    heading_size_degrees:
+        Bucket width for heading quantisation.
     """
 
     def __init__(
@@ -166,13 +176,49 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         raw_df = context["traindataset"]
-        if self.use_heading:
-            _validate_heading(raw_df)
-        df = _assign_place_ids(
-            raw_df,
-            self.cell_size_meters,
-            heading_size_degrees=self.heading_size_degrees if self.use_heading else None,
-        )
+        df = raw_df.copy()
+
+        # Ensure place_id column exists (NaN for rows that need assignment)
+        if "place_id" not in df.columns:
+            df["place_id"] = np.nan
+
+        needs_assignment = df["place_id"].isna()
+
+        # --- Assign new place IDs to rows that lack one -------------------
+        if needs_assignment.any():
+            unassigned = df.loc[needs_assignment]
+
+            if self.use_heading:
+                _validate_heading(unassigned)
+
+            assigned = _assign_place_ids(
+                unassigned,
+                self.cell_size_meters,
+                heading_size_degrees=(
+                    self.heading_size_degrees if self.use_heading else None
+                ),
+            )
+
+            # Offset new IDs so they don't collide with existing ones
+            existing_ids = df.loc[~needs_assignment, "place_id"]
+            if len(existing_ids) > 0:
+                offset = int(existing_ids.max()) + 1
+            else:
+                offset = 0
+            assigned["place_id"] = assigned["place_id"] + offset
+
+            # Write back into the main frame
+            df.loc[needs_assignment, "place_id"] = assigned["place_id"].values
+            # Carry over cell columns where they were computed
+            for col in ("cell_x", "cell_y", "cell_h"):
+                if col in assigned.columns:
+                    if col not in df.columns:
+                        df[col] = np.nan
+                    df.loc[needs_assignment, col] = assigned[col].values
+
+        df["place_id"] = df["place_id"].astype(np.int64)
+
+        # --- Embedding-based coherence filtering (all places) -------------
         image_embs, image_index = _load_image_embeddings(self.image_cache, df)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         groups = _build_groups(df, image_index)
@@ -223,6 +269,4 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
             alive.pop(worst)
 
         return dropped
-
-
 

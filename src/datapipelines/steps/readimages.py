@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -234,22 +234,28 @@ class ReadGSVCitiesTrainImagesStep(BaseStep):
     def __init__(
         self,
         data_root: str | Path,
-        source: str | None = None,
+        source: str = "gsvcities",
+        cities: Sequence[str] | None = None,
     ) -> None:
         super().__init__()
         self.data_root = Path(data_root)
         self.source = source
+        self.cities = tuple(sorted({city.strip() for city in cities if city.strip()})) if cities else None
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
 
         key = str(self.data_root.resolve())
         if self.source is not None:
             key += f"\nsource={self.source}"
+        if self.cities is not None:
+            key += f"\ncities={','.join(self.cities)}"
         self.cache_path = _build_cache_path("readgsvcities", key)
 
     def cache_params(self) -> dict[str, Any]:
         params: dict[str, Any] = {"data_root": str(self.data_root.resolve())}
         if self.source is not None:
             params["source"] = self.source
+        if self.cities is not None:
+            params["cities"] = list(self.cities)
         return params
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -266,6 +272,19 @@ class ReadGSVCitiesTrainImagesStep(BaseStep):
             )
 
         csv_paths = sorted(dataframes_dir.glob("*.csv"))
+        if self.cities is not None:
+            csv_paths_by_stem = {path.stem: path for path in csv_paths}
+            missing_cities = [
+                city for city in self.cities if city not in csv_paths_by_stem
+            ]
+            if missing_cities:
+                raise ValueError(
+                    "Requested GSV-Cities dataframes were not found: "
+                    f"{missing_cities}. Available cities: "
+                    f"{sorted(csv_paths_by_stem)}"
+                )
+            csv_paths = [csv_paths_by_stem[city] for city in self.cities]
+
         df = pd.concat(
             [pd.read_csv(p) for p in csv_paths], ignore_index=True,
         )
