@@ -31,7 +31,7 @@ module:
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: sf_xl_curavpr
+  train_dataset_name: sf_xl_train
   fraction: 0.02
   val_dataset_names:
     - pitts30k_val

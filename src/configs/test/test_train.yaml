@@ -30,7 +30,7 @@ module:
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: gsvcities_curavpr
+  train_dataset_name: gsvcities_train
   #source_sample_weights:
  #   sf_xl_small: 0.5
   #  gsvcities: 0.5

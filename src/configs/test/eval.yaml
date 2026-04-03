@@ -13,7 +13,7 @@ module:
   val_recall_ks: [1, 5, 10]
 
 datamodule:
-  train_dataset_name: sf_xl_curavpr
+  train_dataset_name: sf_xl_train
   val_dataset_names: 
     - pitts30k_val
   test_dataset_names:

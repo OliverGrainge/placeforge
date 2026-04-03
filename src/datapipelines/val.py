@@ -3,20 +3,13 @@ from __future__ import annotations
 from datapipelines import register_pipeline
 from datapipelines.base import Pipeline
 from datapipelines.env import raw_dir
+from datapipelines.paths import MSLS_PATH, PITTS30K_PATH, SF_XL_PATH, SVOX_PATH
 from datapipelines.steps import (
-    ReadValImagesStep,
     ComputeValMatchesStep,
+    ReadValImagesStep,
     SaveValDataset,
     SummaryValDataset,
 )
-
-PITTS30K_PATH = "pitts30k"
-TOKYO247_PATH = "tokyo247"
-SF_XL_SMALL_PATH = "sf_xl"
-SF_XL_PATH = "sf_xl"
-MSLS_PATH = "msls"
-NORDLAND_PATH = "nordland"
-SVOX_PATH = "svox"
 
 @register_pipeline("pitts30k_val", category="val")
 def build_pitts30k_pipeline() -> Pipeline:
@@ -43,8 +36,8 @@ def build_sf_xl_small_pipeline() -> Pipeline:
         PIPELINE_NAME,
         steps=[
             ReadValImagesStep(
-                query_path=raw_dir() / SF_XL_SMALL_PATH / "small" / "val" / "queries",
-                database_path=raw_dir() / SF_XL_SMALL_PATH / "small" / "val" / "database",
+                query_path=raw_dir() / SF_XL_PATH / "small" / "val" / "queries",
+                database_path=raw_dir() / SF_XL_PATH / "small" / "val" / "database",
             ),
             ComputeValMatchesStep(radius_meters=25),
             SaveValDataset(name=PIPELINE_NAME),

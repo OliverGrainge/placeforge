@@ -1,53 +1,45 @@
-# Quick sanity-check run with ResNet-18 backbone (much faster than DINOv2).
+# ResNet-18 ablation run on msls with cos_sim_threshold=0.00.
 logger:
-  name: resnet18_test_run
+  name: msls_cossim_0p00
 
 trainer:
-  max_steps: 48
+  max_steps: 2000
   max_epochs: -1
   accelerator: gpu
   devices: 1
   precision: 16-mixed
   log_every_n_steps: 4
-  val_check_interval: 24
+  val_check_interval: 1000
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0
+
 
 compile: false
 
 module:
   model_name: resnet18_gem
   model_kwargs:
-    descriptor_dim: 512
-    freeze_up_to: layer2
-  learning_rate: 1.0e-3
+    freeze_up_to: none
+  learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 12
-  backbone_lr_scale: 0.1
-  lr_schedule: cosine
+  warmup_steps: 25
+  backbone_lr_scale: 1.0
+  lr_schedule: constant
   val_recall_ks: [1, 5]
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: sf_xl_train
-  fraction: 0.02
+  train_dataset_name: msls_cossim_0p00_train
   val_dataset_names:
-    - pitts30k_test
-    - tokyo247_test
-    - nordland_test
+    - pitts30k_val
   test_dataset_names:
     - pitts30k_test
-    - msls_val
-    - tokyo247_test
-    - nordland_test
-    - svox_test
   batch_size: 32
   images_per_place: 4
-  num_workers: 16
+  num_workers: 2
   transform:
     name: train
     image_size: 224
-    augmentation: heavy
   val_transform:
     name: eval
     image_size: 224

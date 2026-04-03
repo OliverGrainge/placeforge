@@ -3,21 +3,19 @@ from __future__ import annotations
 from datapipelines import register_pipeline
 from datapipelines.base import Pipeline
 from datapipelines.env import raw_dir
+from datapipelines.paths import (
+    NORDLAND_PATH,
+    PITTS30K_PATH,
+    SF_XL_PATH,
+    SVOX_PATH,
+    TOKYO247_PATH,
+)
 from datapipelines.steps import (
-    ReadTestImagesStep,
     ComputeTestMatchesStep,
+    ReadTestImagesStep,
     SaveTestDataset,
     SummaryTestDataset,
 )
-
-
-PITTS30K_PATH = "pitts30k"
-TOKYO247_PATH = "tokyo247"
-SF_XL_SMALL_PATH = "sf_xl"
-SF_XL_PATH = "sf_xl"
-MSLS_PATH = "msls"
-NORDLAND_PATH = "nordland"
-SVOX_PATH = "svox"
 
 
 @register_pipeline("pitts30k_test", category="test")
@@ -61,8 +59,8 @@ def build_sf_xl_small_pipeline() -> Pipeline:
         PIPELINE_NAME,
         steps=[
             ReadTestImagesStep(
-                query_path=raw_dir() / SF_XL_SMALL_PATH / "small" / "test" / "queries_v1",
-                database_path=raw_dir() / SF_XL_SMALL_PATH / "small" / "test" / "database",
+                query_path=raw_dir() / SF_XL_PATH / "small" / "test" / "queries_v1",
+                database_path=raw_dir() / SF_XL_PATH / "small" / "test" / "database",
             ),
             ComputeTestMatchesStep(radius_meters=25),
             SaveTestDataset(name=PIPELINE_NAME),

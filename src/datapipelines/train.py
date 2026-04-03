@@ -3,37 +3,26 @@ from __future__ import annotations
 from datapipelines import register_pipeline
 from datapipelines.base import Pipeline
 from datapipelines.env import raw_dir
+from datapipelines.paths import GSVCITIES_PATH, SF_XL_PATH, MSLS_PATH
 from datapipelines.steps import (
-    ReadTrainImagesStep,
-    ReadGSVCitiesTrainImagesStep,
+    AggregatePlaceEmbeddingStep,
+    AnalyseTrainDatasetStep,
     AssignCuraVPRPlaceIdStep,
     AssignCuraVPRSuperGroupStep,
     ComputeImageEmbeddingStep,
-    AggregatePlaceEmbeddingStep,
+    ReadGSVCitiesTrainImagesStep,
+    ReadTrainImagesStep,
     SaveTrainDataset,
     SummaryTrainDataset,
-    AnalyseTrainDatasetStep,
 )
-
-
-
-
-SF_XL_SMALL_PATH = "sf_xl"
-SF_XL_PATH = "sf_xl"
-GSVCITIES_PATH = "gsvcities"
-MSLS_PATH = "msls"
-NORDLAND_PATH = "nordland"
-SVOX_PATH = "svox"
-PITTS30K_PATH = "pitts30k"
-TOKYO247_PATH = "tokyo247"
 
 # -----------------------------------------------------------------------------
 # SF_XL data pipelines (full dataset: processed/train)
 # -----------------------------------------------------------------------------
 
-@register_pipeline("sf_xl_curavpr", category="train")
-def build_sf_xl_curavpr_con() -> Pipeline:
-    name = "sf_xl_curavpr"
+@register_pipeline("sf_xl_train", category="train")
+def build_sf_xl_train() -> Pipeline:
+    name = "sf_xl_train"
     return Pipeline(
         name,
         steps=[
@@ -45,10 +34,9 @@ def build_sf_xl_curavpr_con() -> Pipeline:
                 image_embedding_name="sf_xl",
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
-                cos_sim_threshold=0.4,
+                cos_sim_threshold=0.3,
                 min_images=4,
             ),
-
             AggregatePlaceEmbeddingStep(
                 image_embedding_name="sf_xl",
                 place_embedding_name=name,
@@ -61,7 +49,6 @@ def build_sf_xl_curavpr_con() -> Pipeline:
                 kmeans_max_iter=100,
                 seed=42,
             ),
-
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
             AnalyseTrainDatasetStep(name=name),
@@ -73,13 +60,13 @@ def build_sf_xl_curavpr_con() -> Pipeline:
 # SF_XL small data pipelines (small dataset: small/train)
 # -----------------------------------------------------------------------------
 
-@register_pipeline("sf_xl_small_curavpr", category="train")
-def build_sf_xl_small_curavpr_con() -> Pipeline:
-    name = "sf_xl_small_curavpr"
+@register_pipeline("sf_xl_small_train", category="train")
+def build_sf_xl_small_train() -> Pipeline:
+    name = "sf_xl_small_train"
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_SMALL_PATH / "small" / "train"),
+            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_PATH / "small" / "train"),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_small", batch_size=128, num_workers=8
             ),
@@ -92,6 +79,182 @@ def build_sf_xl_small_curavpr_con() -> Pipeline:
             ),
             AggregatePlaceEmbeddingStep(
                 image_embedding_name="sf_xl_small",
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=512,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
+
+
+# -----------------------------------------------------------------------------
+# MSLS data pipelines (dataset: train)
+# -----------------------------------------------------------------------------
+
+@register_pipeline("msls_train", category="train")
+def build_msls_train() -> Pipeline:
+    name = "msls_train"
+    return Pipeline(
+        name,
+        steps=[
+            ReadTrainImagesStep(data_root=raw_dir() / MSLS_PATH / "train", source="msls"),
+            ComputeImageEmbeddingStep(
+                image_embedding_name="msls", batch_size=128, num_workers=8
+            ),
+            AssignCuraVPRPlaceIdStep(
+                image_embedding_name="msls",
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+            ),
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name="msls",
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=512,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
+# -----------------------------------------------------------------------------
+# GSV-Cities data pipeline
+# -----------------------------------------------------------------------------
+
+@register_pipeline("gsvcities_train", category="train")
+def build_gsvcities_train() -> Pipeline:
+    name = "gsvcities_train"
+    return Pipeline(
+        name,
+        steps=[
+            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ComputeImageEmbeddingStep(
+                image_embedding_name="gsvcities", batch_size=32, num_workers=8
+            ),
+            AssignCuraVPRPlaceIdStep(
+                image_embedding_name="gsvcities",
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+            ),
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name="gsvcities",
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=512,
+                kmeans_max_iter=100,
+                seed=42,
+                N=1,  # default is 5
+                L=1,  # default is 2
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
+# -----------------------------------------------------------------------------
+# Mixed SF_XL small + GSV-Cities data pipeline
+# -----------------------------------------------------------------------------
+
+@register_pipeline("sf_xl_small_gsvcities_train", category="train")
+def build_sf_xl_small_gsvcities_train() -> Pipeline:
+    name = "sf_xl_small_gsvcities_train"
+    return Pipeline(
+        name,
+        steps=[
+            ReadTrainImagesStep(
+                data_root=raw_dir() / SF_XL_PATH / "small" / "train",
+                source="sf_xl_small",
+            ),
+            ReadGSVCitiesTrainImagesStep(
+                data_root=raw_dir() / GSVCITIES_PATH,
+                source="gsvcities",
+                cities=["PRG", "London", "Boston", "WashingtonDC"],
+            ),
+            ComputeImageEmbeddingStep(
+                image_embedding_name="sf_xl_small_gsvcities", batch_size=128, num_workers=8
+            ),
+            AssignCuraVPRPlaceIdStep(
+                image_embedding_name="sf_xl_small_gsvcities",
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+            ),
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name="sf_xl_small_gsvcities",
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=1024,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
+# -----------------------------------------------------------------------------
+# Mixed SF_XL full + GSV-Cities data pipeline
+# -----------------------------------------------------------------------------
+
+@register_pipeline("sf_xl_gsvcities_train", category="train")
+def build_sf_xl_gsvcities_train() -> Pipeline:
+    name = "sf_xl_gsvcities_train"
+    return Pipeline(
+        name,
+        steps=[
+            ReadTrainImagesStep(
+                data_root=raw_dir() / SF_XL_PATH / "processed" / "train",
+                source="sf_xl",
+            ),
+            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ComputeImageEmbeddingStep(
+                image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
+            ),
+            AssignCuraVPRPlaceIdStep(
+                image_embedding_name="sf_xl_gsvcities",
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+            ),
+            AggregatePlaceEmbeddingStep(
+                image_embedding_name="sf_xl_gsvcities",
                 place_embedding_name=name,
                 reduction="mean",
                 normalize=True,
@@ -110,106 +273,41 @@ def build_sf_xl_small_curavpr_con() -> Pipeline:
 
 
 
-@register_pipeline("sf_xl_small_cosin_00", category="train")
-def build_sf_xl_small_curavpr_con() -> Pipeline:
-    name = "sf_xl_small_cosin_00"
+
+# -----------------------------------------------------------------------------
+# Mixed MSLS + GSV-Cities data pipeline
+# -----------------------------------------------------------------------------
+
+@register_pipeline("msls_gsvcities_train", category="train")
+def build_msls_gsvcities_train() -> Pipeline:
+    name = "msls_gsvcities_train"
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_SMALL_PATH / "small" / "train"),
+            ReadTrainImagesStep(
+                data_root=raw_dir() / MSLS_PATH / "train",
+                source="msls",
+            ),
+            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
             ComputeImageEmbeddingStep(
-                image_embedding_name="sf_xl_small", batch_size=128, num_workers=8
+                image_embedding_name="msls_gsvcities", batch_size=128, num_workers=8
             ),
             AssignCuraVPRPlaceIdStep(
-                image_embedding_name="sf_xl_small",
-                cell_size_meters=10.0,
-                heading_size_degrees=30.0,
-                cos_sim_threshold=0.00,
-                min_images=4,
-            ),
-            AggregatePlaceEmbeddingStep(
-                image_embedding_name="sf_xl_small",
-                place_embedding_name=name,
-                reduction="mean",
-                normalize=True,
-            ),
-            AssignCuraVPRSuperGroupStep(
-                place_embedding_name=name,
-                supergroup_size=512,
-                kmeans_max_iter=100,
-                seed=42,
-            ),
-            SaveTrainDataset(name=name),
-            SummaryTrainDataset(name=name),
-            AnalyseTrainDatasetStep(name=name),
-        ],
-    )
-
-
-
-@register_pipeline("sf_xl_small_cosin_15", category="train")
-def build_sf_xl_small_curavpr_con() -> Pipeline:
-    name = "sf_xl_small_cosin_15"
-    return Pipeline(
-        name,
-        steps=[
-            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_SMALL_PATH / "small" / "train"),
-            ComputeImageEmbeddingStep(
-                image_embedding_name="sf_xl_small", batch_size=128, num_workers=8
-            ),
-            AssignCuraVPRPlaceIdStep(
-                image_embedding_name="sf_xl_small",
-                cell_size_meters=10.0,
-                heading_size_degrees=30.0,
-                cos_sim_threshold=0.15,
-                min_images=4,
-            ),
-            AggregatePlaceEmbeddingStep(
-                image_embedding_name="sf_xl_small",
-                place_embedding_name=name,
-                reduction="mean",
-                normalize=True,
-            ),
-            AssignCuraVPRSuperGroupStep(
-                place_embedding_name=name,
-                supergroup_size=512,
-                kmeans_max_iter=100,
-                seed=42,
-            ),
-            SaveTrainDataset(name=name),
-            SummaryTrainDataset(name=name),
-            AnalyseTrainDatasetStep(name=name),
-        ],
-    )
-
-
-
-@register_pipeline("sf_xl_small_cosin_30", category="train")
-def build_sf_xl_small_curavpr_con() -> Pipeline:
-    name = "sf_xl_small_cosin_03"
-    return Pipeline(
-        name,
-        steps=[
-            ReadTrainImagesStep(data_root=raw_dir() / SF_XL_SMALL_PATH / "small" / "train"),
-            ComputeImageEmbeddingStep(
-                image_embedding_name="sf_xl_small", batch_size=128, num_workers=8
-            ),
-            AssignCuraVPRPlaceIdStep(
-                image_embedding_name="sf_xl_small",
+                image_embedding_name="msls_gsvcities",
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
                 cos_sim_threshold=0.3,
                 min_images=4,
             ),
             AggregatePlaceEmbeddingStep(
-                image_embedding_name="sf_xl_small",
+                image_embedding_name="msls_gsvcities",
                 place_embedding_name=name,
                 reduction="mean",
                 normalize=True,
             ),
             AssignCuraVPRSuperGroupStep(
                 place_embedding_name=name,
-                supergroup_size=512,
+                supergroup_size=1024,
                 kmeans_max_iter=100,
                 seed=42,
             ),
@@ -218,45 +316,3 @@ def build_sf_xl_small_curavpr_con() -> Pipeline:
             AnalyseTrainDatasetStep(name=name),
         ],
     )
-
-
-
-@register_pipeline("gsvcities_curavpr", category="train")
-def build_sf_xl_small_gsvcities_curavpr() -> Pipeline:
-    name = "gsvcities_curavpr"
-    return Pipeline(
-        name,
-        steps=[
-            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
-            ComputeImageEmbeddingStep(
-                image_embedding_name="gsvcities", batch_size=32, num_workers=8
-            ),
-            AssignCuraVPRPlaceIdStep(
-                image_embedding_name="gsvcities",
-                cell_size_meters=10.0,
-                heading_size_degrees=30.0,
-                cos_sim_threshold=0.1,
-                min_images=4,
-            ),
-            AggregatePlaceEmbeddingStep(
-                image_embedding_name="gsvcities",
-                place_embedding_name=name,
-                reduction="mean",
-                normalize=True,
-            ),
-            AssignCuraVPRSuperGroupStep(
-                place_embedding_name=name,
-                supergroup_size=512,
-                kmeans_max_iter=100,
-                seed=42,
-                N=1,    # default is 5
-                L=1,    # default is 2
-            ),
-            SaveTrainDataset(name=name),
-            SummaryTrainDataset(name=name),
-            AnalyseTrainDatasetStep(name=name),
-        ],
-    )
-
-
-

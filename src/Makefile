@@ -4,10 +4,31 @@ SHELL := /bin/bash
 
 datapipelines_train:
 	@source ../.venv/bin/activate && \
-	echo "--- sf_xl_cosplace ---" && python -m cli datapipeline sf_xl_cosplace && \
-	echo "--- sf_xl_eigenplaces ---" && python -m cli datapipeline sf_xl_eigenplaces && \
-	echo "--- sf_xl_curavpr_con ---" && python -m cli datapipeline sf_xl_curavpr_con && \
-	echo "--- sf_xl_curavpr_cls ---" && python -m cli datapipeline sf_xl_curavpr_con
+	for pipeline in \
+		gsvcities_train \
+		msls_gsvcities_train \
+		msls_train \
+		sf_xl_gsvcities_train \
+		sf_xl_small_gsvcities_train \
+		sf_xl_small_train \
+		sf_xl_train \
+	; do \
+		echo "--- $$pipeline ---" && python -m cli datapipeline $$pipeline; \
+	done
+
+
+datapipelines_train_ablation:
+	@source ../.venv/bin/activate && \
+	for pipeline in \
+		msls_cossim_0p00_train \
+		msls_cossim_0p20_train \
+		msls_cossim_0p40_train \
+		sf_xl_small_cossim_0p00_train \
+		sf_xl_small_cossim_0p20_train \
+		sf_xl_small_cossim_0p40_train \
+	; do \
+		echo "--- $$pipeline ---" && python -m cli datapipeline $$pipeline; \
+	done
 
 
 
@@ -37,7 +58,4 @@ datapipelines_test:
 	; do \
 		echo "--- $$pipeline ---" && python -m cli datapipeline $$pipeline; \
 	done
-
-
-
 
