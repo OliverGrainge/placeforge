@@ -3,7 +3,7 @@ logger:
   name: mixed_01
 
 trainer:
-  max_steps: 2000
+  max_steps: 5000
   max_epochs: -1
   accelerator: gpu
   devices: 1
@@ -29,7 +29,7 @@ module:
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: sf_xl_gsvcities_train
+  train_dataset_name: sf_xl_gsvcities_0p30_train
   source_sample_weights:
     sf_xl: 0.9
     gsvcities: 0.1
