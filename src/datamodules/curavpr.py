@@ -83,5 +83,4 @@ class CuraVPRTrainDataModule(BaseDataModule):
             worker_init_fn=_dataloader_worker_init_fn if self.num_workers > 0 else None,
             pin_memory=torch.cuda.is_available(),
             persistent_workers=self.num_workers > 0,
-            in_order=False,
         )

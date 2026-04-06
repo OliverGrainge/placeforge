@@ -11,6 +11,7 @@ trainer:
   val_check_interval: 2500
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0
+  num_sanity_val_steps: 0
 
 compile: false
 
