@@ -313,12 +313,5 @@ class ContrastiveTrainDataset(Dataset):
             "place_ids": torch.tensor(place_ids),
             "supergroup_id": torch.tensor(supergroup_ids[0]),
         }
-        if "headings" in batch[0]:
-            result["headings"] = torch.tensor(
-                [h for sample in batch for h in sample["headings"]]
-            )
-        if "utm" in batch[0]:
-            result["utm"] = torch.tensor(
-                [coord for sample in batch for coord in sample["utm"]]
-            )
+
         return result

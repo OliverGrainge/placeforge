@@ -1,6 +1,6 @@
-# ResNet-18 ablation run on msls with cos_sim_threshold=0.20.
+# ResNet-18 ablation run on sf_xl_small with cos_sim_threshold=0.00.
 logger:
-  name: msls_cossim_0p20
+  name: mixed_05
 
 trainer:
   max_steps: 2000
@@ -29,7 +29,10 @@ module:
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: msls_cossim_0p20_train
+  train_dataset_name: sf_xl_gsvcities_train
+  source_sample_weights:
+    sf_xl: 0.5
+    gsvcities: 0.5
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

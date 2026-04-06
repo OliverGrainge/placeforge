@@ -1,6 +1,6 @@
-# ResNet-18 ablation run on sf_xl_small with cos_sim_threshold=0.40.
+# ResNet-18 ablation run on sf_xl_small with cos_sim_threshold=0.00.
 logger:
-  name: sf_xl_small_cossim_0p40
+  name: mixed
 
 trainer:
   max_steps: 2000
@@ -29,7 +29,7 @@ module:
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: sf_xl_small_cossim_0p40_train
+  train_dataset_name: sf_xl_gsvcities_train
   val_dataset_names:
     - pitts30k_val
   test_dataset_names:

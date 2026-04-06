@@ -23,6 +23,7 @@ def _build_train_cos_sim_ablation_pipeline(
     image_embedding_name: str,
     cos_sim_threshold: float,
     source: str | None = None,
+    use_heading: bool = True,
 ) -> Pipeline:
     read_kwargs: dict[str, Path | str] = {"data_root": data_root}
     if source is not None:
@@ -43,6 +44,7 @@ def _build_train_cos_sim_ablation_pipeline(
                 heading_size_degrees=30.0,
                 cos_sim_threshold=cos_sim_threshold,
                 min_images=4,
+                use_heading=use_heading,
             ),
             AggregatePlaceEmbeddingStep(
                 image_embedding_name=image_embedding_name,
@@ -52,7 +54,7 @@ def _build_train_cos_sim_ablation_pipeline(
             ),
             AssignCuraVPRSuperGroupStep(
                 place_embedding_name=name,
-                supergroup_size=512,
+                supergroup_size=2048,
                 kmeans_max_iter=100,
                 seed=42,
             ),
@@ -100,43 +102,25 @@ def build_sf_xl_small_cossim_0p40_train() -> Pipeline:
         cos_sim_threshold=0.40,
     )
 
-
-# -----------------------------------------------------------------------------
-# MSLS cos_sim_threshold ablations
-# -----------------------------------------------------------------------------
-
-
-@register_pipeline("msls_cossim_0p20_train", category="train")
-def build_msls_cossim_0p20_train() -> Pipeline:
-    name = "msls_cossim_0p20_train"
+@register_pipeline("sf_xl_small_cossim_0p50_train", category="train")
+def build_sf_xl_small_cossim_0p50_train() -> Pipeline:
+    name = "sf_xl_small_cossim_0p50_train"
     return _build_train_cos_sim_ablation_pipeline(
         name=name,
-        data_root=raw_dir() / MSLS_PATH / "train",
-        image_embedding_name="msls",
-        cos_sim_threshold=0.20,
-        source="msls",
+        data_root=raw_dir() / SF_XL_PATH / "small" / "train",
+        image_embedding_name="sf_xl_small",
+        cos_sim_threshold=0.50,
     )
 
 
-@register_pipeline("msls_cossim_0p00_train", category="train")
-def build_msls_cossim_0p00_train() -> Pipeline:
-    name = "msls_cossim_0p00_train"
+@register_pipeline("sf_xl_small_cossim_0p60_train", category="train")
+def build_sf_xl_small_cossim_0p60_train() -> Pipeline:
+    name = "sf_xl_small_cossim_0p60_train"
     return _build_train_cos_sim_ablation_pipeline(
         name=name,
-        data_root=raw_dir() / MSLS_PATH / "train",
-        image_embedding_name="msls",
-        cos_sim_threshold=0.00,
-        source="msls",
+        data_root=raw_dir() / SF_XL_PATH / "small" / "train",
+        image_embedding_name="sf_xl_small",
+        cos_sim_threshold=0.60,
     )
 
 
-@register_pipeline("msls_cossim_0p40_train", category="train")
-def build_msls_cossim_0p40_train() -> Pipeline:
-    name = "msls_cossim_0p40_train"
-    return _build_train_cos_sim_ablation_pipeline(
-        name=name,
-        data_root=raw_dir() / MSLS_PATH / "train",
-        image_embedding_name="msls",
-        cos_sim_threshold=0.40,
-        source="msls",
-    )
