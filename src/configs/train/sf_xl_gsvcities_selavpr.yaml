@@ -1,0 +1,57 @@
+logger:
+  name: sf_xl_gsvcities_selavpr
+
+trainer:
+  max_steps: 20000
+  max_epochs: -1
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
+  log_every_n_steps: 10
+  val_check_interval: 500
+  check_val_every_n_epoch: null
+  gradient_clip_val: 1.0
+
+compile: false
+
+module:
+  model_name: selavpr
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  warmup_steps: 500
+  backbone_lr_scale: 0.1
+  lr_schedule: staged
+  lr_stages:
+    - until: 10000  
+      scale: 1.0
+    - until: 5000  
+      scale: 0.5
+    - until: 5000   
+      scale: 0.25
+  val_recall_ks: [1, 5]
+  miner_epsilon: 0.1
+
+datamodule:
+  train_dataset_name: sf_xl_gsvcities_train
+  fraction: 1.0
+  val_dataset_names:
+    - pitts30k_test
+  test_dataset_names:
+    - pitts30k_test
+    - msls_val
+    - tokyo247_test
+    - nordland_test
+    - svox_test
+  batch_size: 32
+  images_per_place: 4
+  num_workers: 16
+  transform:
+    name: train
+    image_size: 224
+    augmentation: light
+  val_transform:
+    name: eval
+    image_size: 322
+  test_transform:
+    name: eval
+    image_size: 322
