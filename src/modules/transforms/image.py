@@ -31,19 +31,16 @@ class TrainTransform:
                     scale=(0.7, 1.0),
                     interpolation=InterpolationMode.BILINEAR,
                 ),
-                transforms.ColorJitter(
-                    brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1,
-                ),
             ]
         elif augmentation == "heavy":
             aug_ops = [
                 transforms.RandomResizedCrop(
                     (image_size, image_size),
-                    scale=(0.6, 1.0),
+                    scale=(0.8, 1.0),
                     interpolation=InterpolationMode.BILINEAR,
                 ),
                 transforms.ColorJitter(
-                    brightness=0.5, contrast=0.5, saturation=0.5, hue=0.15,
+                    brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1,
                 ),
                 transforms.RandomGrayscale(p=0.1),
                 transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 1.5)),

@@ -78,8 +78,8 @@ def build_sf_xl_gsvcities_cossim_train() -> Pipeline:
                 image_embedding_name="sf_xl_gsvcities",
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
-                cos_sim_threshold=0.2,
-                min_images=4,
+                cos_sim_threshold=0.45,
+                min_images=6,
             ),
             AggregatePlaceEmbeddingStep(
                 image_embedding_name="sf_xl_gsvcities",
@@ -89,7 +89,7 @@ def build_sf_xl_gsvcities_cossim_train() -> Pipeline:
             ),
             AssignCuraVPRSuperGroupStep(
                 place_embedding_name=name,
-                supergroup_size=2048,
+                supergroup_size=1024,
                 kmeans_max_iter=100,
                 seed=42,
             ),

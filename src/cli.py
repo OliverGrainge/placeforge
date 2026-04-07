@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 from dotenv import load_dotenv
+from prettytable import PrettyTable
 
 load_dotenv()
 
@@ -298,6 +299,9 @@ def _handle_test(args: argparse.Namespace) -> int:
     ckpt_name = "best.ckpt" if args.best else "last.ckpt"
     use_robust_load = False
 
+    ckpt_file = None
+    config_path = None
+
     if args.checkpoint is not None:
         # Explicit --checkpoint arg takes top priority
         ckpt_file = args.checkpoint.resolve()
@@ -317,8 +321,11 @@ def _handle_test(args: argparse.Namespace) -> int:
             ckpt_file = Path(_pre_config["checkpoint"]).expanduser().resolve()
             use_robust_load = True
         else:
+            # No checkpoint in config — check if there's one in the default dir
             ckpt_dir = _checkpoint_dir(config_path)
-            ckpt_file = ckpt_dir / ckpt_name
+            candidate = ckpt_dir / ckpt_name
+            if candidate.exists():
+                ckpt_file = candidate
     elif path_arg.is_dir():
         ckpt_dir = path_arg
         ckpt_file = ckpt_dir / ckpt_name
@@ -328,15 +335,18 @@ def _handle_test(args: argparse.Namespace) -> int:
         ckpt_dir = path_arg.parent
         config_path = args.config or _config_from_checkpoint_dir(ckpt_dir)
 
-    if not ckpt_file.exists():
+    if ckpt_file is not None and not ckpt_file.exists():
         print(f"Checkpoint not found: {ckpt_file}")
         return 1
 
     if config_path is None or not config_path.exists():
-        print(
-            f"Cannot infer config from {ckpt_file.parent}. "
-            "Pass --config path/to/config.yaml explicitly."
-        )
+        if ckpt_file is not None:
+            print(
+                f"Cannot infer config from {ckpt_file.parent}. "
+                "Pass --config path/to/config.yaml explicitly."
+            )
+        else:
+            print("No config file found. Pass a YAML config as the path argument.")
         return 1
 
     config = yaml.safe_load(config_path.read_text())
@@ -357,22 +367,111 @@ def _handle_test(args: argparse.Namespace) -> int:
 
     datamodule.setup("test")
 
-    print(f"Testing with checkpoint: {ckpt_file}")
-
     import torch
 
-    if use_robust_load:
+    if ckpt_file is None:
+        # No checkpoint — run with the model's own pretrained weights (e.g. baselines)
+        print("Testing without checkpoint (using model's built-in weights)")
+        trainer = pl.Trainer(**trainer_kwargs)
+        _run_test_and_print_results(trainer, module, datamodule)
+    elif use_robust_load:
+        print(f"Testing with checkpoint: {ckpt_file}")
         # Robust manual loading: load directly into the model, not the lightning module
         _load_checkpoint_into_model(module.model, ckpt_file)
         trainer = pl.Trainer(**trainer_kwargs)
-        trainer.test(module, datamodule=datamodule)
+        _run_test_and_print_results(trainer, module, datamodule)
     else:
+        print(f"Testing with checkpoint: {ckpt_file}")
         _orig_torch_load = torch.load
         torch.load = lambda *a, **kw: _orig_torch_load(*a, **{**kw, "weights_only": False})
         trainer = pl.Trainer(**trainer_kwargs)
-        trainer.test(module, datamodule=datamodule, ckpt_path=str(ckpt_file))
+        _run_test_and_print_results(
+            trainer, module, datamodule, ckpt_path=str(ckpt_file)
+        )
 
     return 0
+
+
+def _run_test_and_print_results(
+    trainer: Any,
+    module: Any,
+    datamodule: Any,
+    ckpt_path: str | None = None,
+) -> None:
+    test_kwargs: dict[str, Any] = {"datamodule": datamodule, "verbose": False}
+    if ckpt_path is not None:
+        test_kwargs["ckpt_path"] = ckpt_path
+
+    results = trainer.test(module, **test_kwargs)
+    _print_test_results(results)
+
+
+def _print_test_results(results: list[Mapping[str, float]]) -> None:
+    metrics = _unique_test_metrics(results)
+    if not metrics:
+        return
+
+    all_recalls = all(_is_recall_metric(name) for name in metrics)
+    table = PrettyTable()
+    table.align = "l"
+
+    if all_recalls:
+        table.title = "Test metrics (%)"
+        datasets, recall_metrics = _group_recall_test_metrics(metrics)
+        table.field_names = ["Dataset", *recall_metrics]
+        for recall_metric in recall_metrics:
+            table.align[recall_metric] = "r"
+        for dataset, recalls in datasets.items():
+            table.add_row(
+                [dataset, *(recalls.get(metric, "-") for metric in recall_metrics)]
+            )
+    else:
+        table.field_names = ["Metric", "Value"]
+        table.align["Value"] = "r"
+        for name, value in metrics.items():
+            table.add_row([name, _format_test_metric_value(name, value)])
+
+    print()
+    print(table)
+    print()
+
+
+def _unique_test_metrics(results: list[Mapping[str, float]]) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    for result in results:
+        for name, value in result.items():
+            metrics.setdefault(name, float(value))
+    return metrics
+
+
+def _format_test_metric_value(name: str, value: float) -> str:
+    if _is_recall_metric(name):
+        return f"{value * 100:.1f}"
+    return f"{value:.1f}"
+
+
+def _is_recall_metric(name: str) -> bool:
+    return "/R@" in name
+
+
+def _group_recall_test_metrics(
+    metrics: Mapping[str, float],
+) -> tuple[dict[str, dict[str, str]], list[str]]:
+    datasets: dict[str, dict[str, str]] = {}
+    recall_metrics: list[str] = []
+
+    for name, value in metrics.items():
+        dataset, recall = _split_test_recall_metric_name(name)
+        datasets.setdefault(dataset, {})[recall] = _format_test_metric_value(name, value)
+        if recall not in recall_metrics:
+            recall_metrics.append(recall)
+
+    return datasets, recall_metrics
+
+
+def _split_test_recall_metric_name(name: str) -> tuple[str, str]:
+    dataset, recall = name.rsplit("/", maxsplit=1)
+    return dataset.removeprefix("test/"), recall
 
 
 def _print_dataset_summary(datamodule: Any) -> None:

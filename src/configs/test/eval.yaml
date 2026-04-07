@@ -1,7 +1,7 @@
 # Path to a standalone checkpoint (model weights, not a full Lightning ckpt).
 # Supports .ckpt, .pth, .pt files. Uses robust loading with automatic
 # prefix stripping/adding to match the model's keys.
-checkpoint: /home/oliver/github/placeforge/checkpoints/baselines/mutualvpr_gem/best_model.pth
+#checkpoint: /home/oliver/github/placeforge/checkpoints/train/sf_xl_salad/best.ckpt
 
 trainer:
   accelerator: gpu
@@ -9,7 +9,7 @@ trainer:
   precision: 16-mixed
 
 module:
-  model_name: dinov2_gem          # dinov2_gem | dinov2_salad | dinov2_boq
+  model_name: eigenplaces          # dinov2_gem | dinov2_salad | dinov2_boq | sage | boq | megaloc | supervlad | mixvpr | eigenplaces | salad |
   val_recall_ks: [1, 5, 10]
 
 datamodule:

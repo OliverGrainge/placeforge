@@ -11,12 +11,38 @@ from .models.dinov2 import DinoV2GeM, DinoV2SALAD, DinoV2BoQ
 from .models.resnet import ResNet18GeM
 from pytorch_metric_learning import losses, miners
 
-_MODELS = {
+_MODELS: dict[str, type] = {
     "dinov2_gem": DinoV2GeM,
     "dinov2_salad": DinoV2SALAD,
     "dinov2_boq": DinoV2BoQ,
     "resnet18_gem": ResNet18GeM,
 }
+
+# Baseline models are registered lazily to avoid heavy torch.hub imports
+# at module load time.
+_BASELINE_MODELS: dict[str, tuple[str, str]] = {
+    "megaloc": ("baselines", "MegaLoc"),
+    "boq": ("baselines", "BoQ"),
+    "salad": ("baselines", "SALAD"),
+    "eigenplaces": ("baselines", "EigenPlaces"),
+    "mixvpr": ("baselines", "MixVPR"),
+    "supervlad": ("baselines", "SuperVLAD"),
+    "sage": ("baselines", "SAGE"),
+}
+
+
+def _resolve_model(name: str) -> type:
+    """Look up a model class by name, lazily importing baselines."""
+    if name in _MODELS:
+        return _MODELS[name]
+    if name in _BASELINE_MODELS:
+        module_name, class_name = _BASELINE_MODELS[name]
+        import importlib
+        mod = importlib.import_module(f".models.{module_name}", package=__package__)
+        cls = getattr(mod, class_name)
+        _MODELS[name] = cls  # cache for future lookups
+        return cls
+    return None
 
 
 class CuraVPRLightningModule(PlaceRecognitionModule):
@@ -31,6 +57,7 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
         val_recall_ks: list[int] | None = None,
         backbone_lr_scale: float = 0.1,
         lr_schedule: str = "cosine",
+        lr_stages: list[dict[str, int | float]] | None = None,
         # MultiSimilarityLoss + MultiSimilarityMiner (designed to work together)
         ms_alpha: float = 1.0,
         ms_beta: float = 50.0,
@@ -39,13 +66,14 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
     ) -> None:
         super().__init__()
 
-        if lr_schedule not in ("cosine", "constant"):
-            raise ValueError(f"lr_schedule must be 'cosine' or 'constant', got '{lr_schedule}'")
+        if lr_schedule not in ("cosine", "constant", "staged"):
+            raise ValueError(f"lr_schedule must be 'cosine', 'staged', or 'constant', got '{lr_schedule}'")
 
         self.save_hyperparameters()
-        model_cls = _MODELS.get(model_name)
+        model_cls = _resolve_model(model_name)
         if model_cls is None:
-            raise ValueError(f"Unknown model {model_name!r}. Available: {list(_MODELS)}")
+            available = list(_MODELS) + list(_BASELINE_MODELS)
+            raise ValueError(f"Unknown model {model_name!r}. Available: {available}")
         self.model = model_cls(**(model_kwargs or {}))
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -53,6 +81,7 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
         self.val_recall_ks = val_recall_ks or [1, 5, 10]
         self.backbone_lr_scale = backbone_lr_scale
         self.lr_schedule = lr_schedule
+        self.lr_stages = lr_stages
 
         self.ms_miner = miners.MultiSimilarityMiner(epsilon=miner_epsilon)
         self.ms_loss = losses.MultiSimilarityLoss(
@@ -104,6 +133,25 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
             weight_decay=self.weight_decay,
         )
         warmup_steps = self.warmup_steps
+
+        if self.lr_schedule == "staged":
+            stages = self.lr_stages or [{"until": 50000, "scale": 1.0}]
+            cumulative = []
+            step_acc = 0
+            for stage in stages:
+                step_acc += stage["until"]
+                cumulative.append((step_acc, stage["scale"]))
+
+            def lr_lambda(current_step: int) -> float:
+                if current_step < warmup_steps:
+                    return current_step / max(1, warmup_steps)
+                for end_step, scale in cumulative:
+                    if current_step < end_step:
+                        return scale
+                return cumulative[-1][1]
+
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+            return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
 
         if self.lr_schedule == "constant":
             def lr_lambda(current_step: int) -> float:

@@ -4,6 +4,7 @@ pyarrow
 PyYAML
 tqdm
 python-dotenv
+prettytable
 
 # Dataset loading and visualization
 Pillow

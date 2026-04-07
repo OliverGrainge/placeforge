@@ -1,8 +1,8 @@
 logger:
-  name: sf_xl_boq
+  name: sf_xl_boq_new
 
 trainer:
-  max_steps: 200000
+  max_steps: 20000
   max_epochs: -1
   accelerator: gpu
   devices: 1
@@ -18,14 +18,21 @@ module:
   model_name: dinov2_boq
   model_kwargs:
     use_checkpointing: false
-    unfreeze_n_blocks: 6
+    unfreeze_n_blocks: 2
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 15000
-  backbone_lr_scale: 0.2
-  lr_schedule: cosine
+  warmup_steps: 500
+  backbone_lr_scale: 0.1
+  lr_schedule: staged
+  lr_stages:
+    - until: 10000  
+      scale: 1.0
+    - until: 5000  
+      scale: 0.5
+    - until: 5000   
+      scale: 0.25
   val_recall_ks: [1, 5]
-  miner_epsilon: 0.05
+  miner_epsilon: 0.1
 
 datamodule:
   train_dataset_name: sf_xl_gsvcities_train
@@ -39,15 +46,15 @@ datamodule:
     - nordland_test
     - svox_test
   batch_size: 128
-  images_per_place: 4
+  images_per_place: 6
   num_workers: 16
   transform:
     name: train
-    image_size: 322
+    image_size: 224
     augmentation: heavy
   val_transform:
     name: eval
-    image_size: 322
+    image_size: 224
   test_transform:
     name: eval
-    image_size: 322
+    image_size: 224
