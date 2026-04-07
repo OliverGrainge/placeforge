@@ -45,8 +45,8 @@ datamodule:
     - tokyo247_test
     - nordland_test
     - svox_test
-  batch_size: 128
-  images_per_place: 6
+  batch_size: 64
+  images_per_place: 4
   num_workers: 16
   transform:
     name: train

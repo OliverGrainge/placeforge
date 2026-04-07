@@ -9,6 +9,7 @@ from torch import Tensor
 from .base import PlaceRecognitionModule
 from .models.dinov2 import DinoV2GeM, DinoV2SALAD, DinoV2BoQ
 from .models.resnet import ResNet18GeM
+from .models.selavpr import SelaVPR
 from pytorch_metric_learning import losses, miners
 
 _MODELS: dict[str, type] = {
@@ -16,6 +17,7 @@ _MODELS: dict[str, type] = {
     "dinov2_salad": DinoV2SALAD,
     "dinov2_boq": DinoV2BoQ,
     "resnet18_gem": ResNet18GeM,
+    "selavpr": SelaVPR,
 }
 
 # Baseline models are registered lazily to avoid heavy torch.hub imports
