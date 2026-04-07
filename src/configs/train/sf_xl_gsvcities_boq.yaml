@@ -2,7 +2,7 @@ logger:
   name: sf_xl_boq
 
 trainer:
-  max_steps: 250000
+  max_steps: 200000
   max_epochs: -1
   accelerator: gpu
   devices: 1
@@ -11,7 +11,6 @@ trainer:
   val_check_interval: 2500
   check_val_every_n_epoch: null
   gradient_clip_val: 1.0
-  num_sanity_val_steps: 0
 
 compile: false
 
@@ -22,8 +21,8 @@ module:
     unfreeze_n_blocks: 6
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 5000
-  backbone_lr_scale: 0.1
+  warmup_steps: 15000
+  backbone_lr_scale: 0.2
   lr_schedule: cosine
   val_recall_ks: [1, 5]
   miner_epsilon: 0.05
