@@ -91,6 +91,7 @@ class AnalyseTrainDatasetStep(BaseStep):
             )
 
             sg_id = place_df["supergroup_id"].iloc[0] if "supergroup_id" in place_df.columns else "?"
+            sources = sorted(place_df["source"].unique()) if "source" in place_df.columns else None
 
             for i, rel_path in enumerate(image_paths):
                 row, col = divmod(i, n_cols)
@@ -107,10 +108,11 @@ class AnalyseTrainDatasetStep(BaseStep):
                 row, col = divmod(i, n_cols)
                 axes[row][col].set_visible(False)
 
-            fig.suptitle(
-                f"place {place_id}  (sg={sg_id}, {len(place_df)} images)",
-                fontsize=10,
-            )
+            title = f"place {place_id}  (sg={sg_id}, {len(place_df)} images"
+            if sources is not None:
+                title += f", source={'+'.join(sources)}"
+            title += ")"
+            fig.suptitle(title, fontsize=10)
             fig.tight_layout()
             fig.savefig(figures_dir / f"place_{place_id}.png", dpi=100, bbox_inches="tight")
             plt.close(fig)

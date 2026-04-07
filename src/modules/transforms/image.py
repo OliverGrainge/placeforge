@@ -39,15 +39,15 @@ class TrainTransform:
             aug_ops = [
                 transforms.RandomResizedCrop(
                     (image_size, image_size),
-                    scale=(0.4, 1.0),
+                    scale=(0.6, 1.0),
                     interpolation=InterpolationMode.BILINEAR,
                 ),
                 transforms.ColorJitter(
-                    brightness=0.7, contrast=0.7, saturation=0.7, hue=0.2,
+                    brightness=0.5, contrast=0.5, saturation=0.5, hue=0.15,
                 ),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0)),
-                transforms.RandomErasing(p=0.2, scale=(0.02, 0.15)),
+                transforms.RandomGrayscale(p=0.1),
+                transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 1.5)),
+                transforms.RandomErasing(p=0.15, scale=(0.02, 0.1)),
             ]
         else:
             raise ValueError(

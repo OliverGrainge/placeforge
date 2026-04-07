@@ -248,6 +248,7 @@ class ReadGSVCitiesTrainImagesStep(BaseStep):
             key += f"\nsource={self.source}"
         if self.cities is not None:
             key += f"\ncities={','.join(self.cities)}"
+        key += "\nversion=2"
         self.cache_path = _build_cache_path("readgsvcities", key)
 
     def cache_params(self) -> dict[str, Any]:
@@ -256,6 +257,7 @@ class ReadGSVCitiesTrainImagesStep(BaseStep):
             params["source"] = self.source
         if self.cities is not None:
             params["cities"] = list(self.cities)
+        params["version"] = 2
         return params
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -285,15 +287,25 @@ class ReadGSVCitiesTrainImagesStep(BaseStep):
                 )
             csv_paths = [csv_paths_by_stem[city] for city in self.cities]
 
-        df = pd.concat(
-            [pd.read_csv(p) for p in csv_paths], ignore_index=True,
-        )
+        city_dfs = []
+        for i, p in enumerate(csv_paths):
+            city_df = pd.read_csv(p)
+            # Prefix place_id so that identical numeric IDs from different
+            # cities don't collide (mirrors the original GSV-Cities loader).
+            city_df["place_id_raw"] = city_df["place_id"]
+            city_df["place_id"] = city_df["place_id"] + (i * 10**5)
+            city_dfs.append(city_df)
+        df = pd.concat(city_dfs, ignore_index=True)
 
         if self.pbar is not None:
             self.pbar.reset(total=len(df))
 
         image_paths: list[str] = []
         for _, row in df.iterrows():
+            # Use the raw (un-prefixed) place_id for the filename, since
+            # that matches what is stored on disk.
+            row = row.copy()
+            row["place_id"] = row["place_id_raw"]
             path = _gsvcities_image_path(row, images_dir)
             image_paths.append(
                 _relative_path(path, self.raw_dir, self.data_root)

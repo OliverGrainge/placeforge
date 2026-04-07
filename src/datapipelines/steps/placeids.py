@@ -74,7 +74,7 @@ def _assign_place_ids(
     else:
         df["place_id"] = df["cell_x"] * (df["cell_y"].max() + 1) + df["cell_y"]
 
-    return df.sort_values("place_id").reset_index(drop=True)
+    return df
 
 
 def _load_image_embeddings(
@@ -172,6 +172,7 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
             "min_images": self.min_images,
             "use_heading": self.use_heading,
             "heading_size_degrees": self.heading_size_degrees,
+            "version": 2,
         }
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
