@@ -7,6 +7,8 @@ from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
+import re
+import math 
 
 from .base import BaseStep
 
@@ -159,13 +161,14 @@ def _gsvcities_image_path(row: pd.Series, images_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-class ReadTrainImagesStep(BaseStep):
-    """Build a training manifest from @-delimited image filenames."""
+class ReadSFXLImagesStep(BaseStep):
+    """Build a training manifest from SF-XL @-delimited image filenames."""
+
+    source = "sf_xl"
 
     def __init__(
         self,
         data_root: str | Path | list[str | Path],
-        source: str | None = None,
     ) -> None:
         super().__init__()
         self.data_roots = (
@@ -173,21 +176,17 @@ class ReadTrainImagesStep(BaseStep):
             if isinstance(data_root, list)
             else [Path(data_root)]
         )
-        self.source = source
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
 
         key = "\n".join(sorted(str(r.resolve()) for r in self.data_roots))
-        if self.source is not None:
-            key += f"\nsource={self.source}"
+        key += f"\nsource={self.source}"
         self.cache_path = _build_cache_path("readimages", key)
 
     def cache_params(self) -> dict[str, Any]:
-        params: dict[str, Any] = {
+        return {
             "data_roots": sorted(str(r.resolve()) for r in self.data_roots),
+            "source": self.source,
         }
-        if self.source is not None:
-            params["source"] = self.source
-        return params
 
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         if self.cache_path.exists():
@@ -205,16 +204,14 @@ class ReadTrainImagesStep(BaseStep):
         records = []
         for image_id, image_path in enumerate(paths):
             utm_east, utm_north, heading = _parse_filename(image_path.name)
-            record = {
+            records.append({
                 "image_id": image_id,
                 "image_path": _relative_path(image_path, self.raw_dir),
                 "utm_east": utm_east,
                 "utm_north": utm_north,
                 "heading": heading,
-            }
-            if self.source is not None:
-                record["source"] = self.source
-            records.append(record)
+                "source": self.source,
+            })
             if self.pbar is not None:
                 self.pbar.update(1)
 
@@ -228,33 +225,255 @@ class ReadTrainImagesStep(BaseStep):
             yield from _iter_sorted_image_paths(root)
 
 
-class ReadGSVCitiesTrainImagesStep(BaseStep):
+class ReadMSLSImagesStep(BaseStep):
+    """Build a training manifest from MSLS @-delimited image filenames."""
+
+    source = "msls"
+
+    def __init__(
+        self,
+        data_root: str | Path | list[str | Path],
+    ) -> None:
+        super().__init__()
+        self.data_roots = (
+            [Path(d) for d in data_root]
+            if isinstance(data_root, list)
+            else [Path(data_root)]
+        )
+        self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
+
+        key = "\n".join(sorted(str(r.resolve()) for r in self.data_roots))
+        key += f"\nsource={self.source}"
+        self.cache_path = _build_cache_path("readimages", key)
+
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "data_roots": sorted(str(r.resolve()) for r in self.data_roots),
+            "source": self.source,
+        }
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        if self.cache_path.exists():
+            df = pd.read_parquet(self.cache_path)
+            return _merge_into_context(context, "traindataset", df)
+
+        for root in self.data_roots:
+            if not root.exists():
+                raise FileNotFoundError(f"Data root does not exist: {root}")
+
+        paths = list(self._iter_image_paths())
+        if self.pbar is not None:
+            self.pbar.reset(total=len(paths))
+
+        records = []
+        for image_id, image_path in enumerate(paths):
+            utm_east, utm_north, heading = _parse_filename(image_path.name)
+            records.append({
+                "image_id": image_id,
+                "image_path": _relative_path(image_path, self.raw_dir),
+                "utm_east": utm_east,
+                "utm_north": utm_north,
+                "heading": heading,
+                "source": self.source,
+            })
+            if self.pbar is not None:
+                self.pbar.update(1)
+
+        df = pd.DataFrame(records)
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(self.cache_path, index=False)
+        return _merge_into_context(context, "traindataset", df)
+
+    def _iter_image_paths(self):
+        for root in self.data_roots:
+            yield from _iter_sorted_image_paths(root)
+
+_PITTS_NOTE_RE = re.compile(r"pitch(?P<pitch>\d+)_yaw(?P<yaw>\d+)", re.IGNORECASE)
+
+
+class ReadPitts30kImagesStep(BaseStep):
+    """
+    Build a training manifest for Pitts30k images and assign place_ids using:
+
+        place_id = (UTM cell, orientation bin)
+
+    This follows the paper's Pitts30k preprocessing idea:
+    - derive pseudo heading labels from the discrete yaw views
+    - combine spatial bins and orientation bins to form place categories
+
+    Filename format (leading '@' means split()[0] is empty):
+        @ UTM_east @ UTM_north @ UTM_zone_number @ UTM_zone_letter
+        @ latitude @ longitude @ pano_id @ tile_num @ heading @ pitch
+        @ roll @ height @ timestamp @ note @ extension
+
+    In Pitts30k filenames, the explicit heading field is often empty, but the note
+    contains values like `pitch1_yaw7`, from which we derive:
+        heading_deg = (yaw_index - 1) * 30
+    """
+
+    source = "pitts30k"
+
+    def __init__(
+        self,
+        data_root: str | Path | list[str | Path],
+        cell_size_m: float = 15.0,
+        angle_bin_deg: float = 60.0,
+    ) -> None:
+        super().__init__()
+        self.data_roots = (
+            [Path(d) for d in data_root]
+            if isinstance(data_root, list)
+            else [Path(data_root)]
+        )
+        self.cell_size_m = float(cell_size_m)
+        self.angle_bin_deg = float(angle_bin_deg)
+        self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
+
+        key = "\n".join(sorted(str(r.resolve()) for r in self.data_roots))
+        key += f"\ncell_size_m={self.cell_size_m}"
+        key += f"\nangle_bin_deg={self.angle_bin_deg}"
+        key += f"\nsource={self.source}"
+        self.cache_path = _build_cache_path("readpitts30kimages", key)
+
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "data_roots": sorted(str(r.resolve()) for r in self.data_roots),
+            "cell_size_m": self.cell_size_m,
+            "angle_bin_deg": self.angle_bin_deg,
+            "source": self.source,
+        }
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        if self.cache_path.exists():
+            df = pd.read_parquet(self.cache_path)
+            return _merge_into_context(context, "traindataset", df)
+
+        for root in self.data_roots:
+            if not root.exists():
+                raise FileNotFoundError(f"Data root does not exist: {root}")
+
+        paths = list(self._iter_image_paths())
+        if self.pbar is not None:
+            self.pbar.reset(total=len(paths))
+
+        records: list[dict[str, Any]] = []
+        for image_id, image_path in enumerate(paths):
+            meta = self._parse_pitts_filename(image_path.name)
+            place_id = self._build_place_id(
+                utm_east=meta["utm_east"],
+                utm_north=meta["utm_north"],
+                heading_deg=meta["heading"],
+            )
+
+            records.append({
+                "image_id": image_id,
+                "image_path": _relative_path(image_path, self.raw_dir),
+                "utm_east": meta["utm_east"],
+                "utm_north": meta["utm_north"],
+                "heading": meta["heading"],             # derived from yaw
+                "pitch_index": meta["pitch_index"],
+                "yaw_index": meta["yaw_index"],
+                "tile_num": meta["tile_num"],
+                "pano_id": meta["pano_id"],
+                "place_id": place_id,
+                "source": self.source,
+            })
+
+            if self.pbar is not None:
+                self.pbar.update(1)
+
+        df = pd.DataFrame(records)
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(self.cache_path, index=False)
+        return _merge_into_context(context, "traindataset", df)
+
+    def _iter_image_paths(self):
+        for root in self.data_roots:
+            yield from _iter_sorted_image_paths(root)
+
+    def _parse_pitts_filename(self, filename: str) -> dict[str, Any]:
+        stem = Path(filename).stem
+        parts = stem.split("@")
+
+        if len(parts) < 15:
+            raise ValueError(f"Unexpected Pitts30k filename format: {filename}")
+
+        utm_east = float(parts[1])
+        utm_north = float(parts[2])
+        pano_id = parts[7]
+        tile_num = int(parts[8]) if parts[8] else None
+        note = parts[14]
+
+        match = _PITTS_NOTE_RE.fullmatch(note)
+        if match is None:
+            raise ValueError(
+                f"Could not parse pitch/yaw from Pitts30k note field in filename: {filename}"
+            )
+
+        pitch_index = int(match.group("pitch"))
+        yaw_index = int(match.group("yaw"))
+
+        if not 1 <= yaw_index <= 12:
+            raise ValueError(f"Unexpected yaw index in filename {filename}: {yaw_index}")
+
+        # Pitts30k pseudo heading from yaw bucket
+        heading_deg = float((yaw_index - 1) * 30)
+
+        return {
+            "utm_east": utm_east,
+            "utm_north": utm_north,
+            "pano_id": pano_id,
+            "tile_num": tile_num,
+            "pitch_index": pitch_index,
+            "yaw_index": yaw_index,
+            "heading": heading_deg,
+        }
+
+    def _build_place_id(
+        self,
+        utm_east: float,
+        utm_north: float,
+        heading_deg: float,
+    ) -> str:
+        # Spatial binning in UTM, following the paper's category construction idea.
+        east_bin = math.floor(utm_east / self.cell_size_m)
+        north_bin = math.floor(utm_north / self.cell_size_m)
+
+        # Orientation binning. For Pitts30k the paper uses alpha=60°.
+        # With 12 yaw views at 30° steps, this groups adjacent directions in pairs.
+        heading_bin = math.floor((heading_deg % 360.0) / self.angle_bin_deg)
+
+        return f"{east_bin}_{north_bin}_{heading_bin}"
+
+
+
+class ReadGSVCitiesImagesStep(BaseStep):
     """Build a training manifest from GSV-Cities CSVs + images."""
+
+    source = "gsvcities"
 
     def __init__(
         self,
         data_root: str | Path,
-        source: str = "gsvcities",
         cities: Sequence[str] | None = None,
     ) -> None:
         super().__init__()
         self.data_root = Path(data_root)
-        self.source = source
         self.cities = tuple(sorted({city.strip() for city in cities if city.strip()})) if cities else None
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
 
         key = str(self.data_root.resolve())
-        if self.source is not None:
-            key += f"\nsource={self.source}"
+        key += f"\nsource={self.source}"
         if self.cities is not None:
             key += f"\ncities={','.join(self.cities)}"
         key += "\nversion=2"
         self.cache_path = _build_cache_path("readgsvcities", key)
 
     def cache_params(self) -> dict[str, Any]:
-        params: dict[str, Any] = {"data_root": str(self.data_root.resolve())}
-        if self.source is not None:
-            params["source"] = self.source
+        params: dict[str, Any] = {
+            "data_root": str(self.data_root.resolve()),
+            "source": self.source,
+        }
         if self.cities is not None:
             params["cities"] = list(self.cities)
         params["version"] = 2
@@ -325,10 +544,8 @@ class ReadGSVCitiesTrainImagesStep(BaseStep):
             "utm_east": easting,
             "utm_north": northing,
             "heading": df["northdeg"].to_numpy(dtype=np.float64),
+            "source": self.source,
         })
-
-        if self.source is not None:
-            result["source"] = self.source
 
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         result.to_parquet(self.cache_path, index=False)

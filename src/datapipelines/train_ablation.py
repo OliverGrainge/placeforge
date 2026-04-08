@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from datapipelines import register_pipeline
 from datapipelines.base import Pipeline
 from datapipelines.env import raw_dir
@@ -12,10 +10,10 @@ from datapipelines.steps import (
     AssignCuraVPRPlaceIdStep,
     AssignCuraVPRSuperGroupStep,
     ComputeImageEmbeddingStep,
-    ReadTrainImagesStep,
+    ReadGSVCitiesImagesStep,
+    ReadSFXLImagesStep,
     SaveTrainDataset,
     SummaryTrainDataset,
-    ReadGSVCitiesTrainImagesStep,
 )
 
 @register_pipeline("sf_xl_gsvcities_cossim_0p60_train", category="train")
@@ -24,11 +22,8 @@ def build_sf_xl_gsvcities_cossim_0p60_train() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(
-                data_root=raw_dir() / SF_XL_PATH / "processed" / "train",
-                source="sf_xl",
-            ),
-            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
             ),
@@ -63,11 +58,8 @@ def build_sf_xl_gsvcities_cossim_0p50_train() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(
-                data_root=raw_dir() / SF_XL_PATH / "processed" / "train",
-                source="sf_xl",
-            ),
-            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
             ),
@@ -103,11 +95,8 @@ def build_sf_xl_gsvcities_cossim_0p40_train() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(
-                data_root=raw_dir() / SF_XL_PATH / "processed" / "train",
-                source="sf_xl",
-            ),
-            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
             ),
@@ -142,11 +131,8 @@ def build_sf_xl_gsvcities_cossim_0p30_train() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(
-                data_root=raw_dir() / SF_XL_PATH / "processed" / "train",
-                source="sf_xl",
-            ),
-            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
             ),
@@ -184,11 +170,8 @@ def build_sf_xl_gsvcities_cossim_0p20_train() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(
-                data_root=raw_dir() / SF_XL_PATH / "processed" / "train",
-                source="sf_xl",
-            ),
-            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
             ),
@@ -225,11 +208,8 @@ def build_sf_xl_gsvcities_cossim_0p10_train() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            ReadTrainImagesStep(
-                data_root=raw_dir() / SF_XL_PATH / "processed" / "train",
-                source="sf_xl",
-            ),
-            ReadGSVCitiesTrainImagesStep(data_root=raw_dir() / GSVCITIES_PATH, source="gsvcities"),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
                 image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
             ),
