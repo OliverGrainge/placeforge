@@ -30,17 +30,15 @@ def build_sf_xl_train() -> Pipeline:
         steps=[
             ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
             ComputeImageEmbeddingStep(
-                image_embedding_name="sf_xl", batch_size=128, num_workers=8
+                source="sf_xl", batch_size=128, num_workers=8
             ),
             AssignCuraVPRPlaceIdStep(
-                image_embedding_name="sf_xl",
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
                 cos_sim_threshold=0.3,
                 min_images=4,
             ),
             AggregatePlaceEmbeddingStep(
-                image_embedding_name="sf_xl",
                 place_embedding_name=name,
                 reduction="mean",
                 normalize=True,
@@ -72,10 +70,9 @@ def build_pitts30k_train() -> Pipeline:
                 data_root=raw_dir() / PITTS30K_PATH / "images" / "train",
             ),
             ComputeImageEmbeddingStep(
-                image_embedding_name="pitts30k", batch_size=128, num_workers=8
+                source="pitts30k", batch_size=128, num_workers=8
             ),
             AssignCuraVPRPlaceIdStep(
-                image_embedding_name="pitts30k",
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
                 cos_sim_threshold=0.0,
@@ -83,7 +80,6 @@ def build_pitts30k_train() -> Pipeline:
                 use_heading=True,
             ),
             AggregatePlaceEmbeddingStep(
-                image_embedding_name="pitts30k",
                 place_embedding_name=name,
                 reduction="mean",
                 normalize=True,
@@ -118,18 +114,16 @@ def build_msls_train() -> Pipeline:
                 ],
             ),
             ComputeImageEmbeddingStep(
-                image_embedding_name="msls", batch_size=128, num_workers=8
+                source="msls", batch_size=128, num_workers=8
             ),
             AssignCuraVPRPlaceIdStep(
-                image_embedding_name="msls",
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
                 cos_sim_threshold=0.0,
                 min_images=4,
-                use_heading=False,
+                use_heading=True,
             ),
             AggregatePlaceEmbeddingStep(
-                image_embedding_name="msls",
                 place_embedding_name=name,
                 reduction="mean",
                 normalize=True,
@@ -159,17 +153,99 @@ def build_gsvcities_train() -> Pipeline:
         steps=[
             ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
-                image_embedding_name="gsvcities", batch_size=128, num_workers=8
+                source="gsvcities", batch_size=128, num_workers=8
             ),
             AssignCuraVPRPlaceIdStep(
-                image_embedding_name="gsvcities",
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+                use_heading=False,
+            ),
+            AggregatePlaceEmbeddingStep(
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=2048,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
+@register_pipeline("gsvcities_prg_train", category="train")
+def build_gsvcities_train() -> Pipeline:
+    name = "gsvcities_prg_train"
+    return Pipeline(
+        name,
+        steps=[
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH, cities=["PRG"], source="gsvcities_prg"),
+            ComputeImageEmbeddingStep(
+                source="gsvcities_prg", batch_size=128, num_workers=8
+            ),
+            AssignCuraVPRPlaceIdStep(
+                cell_size_meters=10.0,
+                heading_size_degrees=30.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+                use_heading=False,
+            ),
+            AggregatePlaceEmbeddingStep(
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=2048,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
+# -----------------------------------------------------------------------------
+# Mixed Pitts30k + GSV-Cities PRG data pipeline
+# -----------------------------------------------------------------------------
+
+@register_pipeline("pitts30k_gsvcities_prg_train", category="train")
+def build_pitts30k_gsvcities_prg_train() -> Pipeline:
+    name = "pitts30k_gsvcities_prg_train"
+    return Pipeline(
+        name,
+        steps=[
+            ReadPitts30kImagesStep(
+                data_root=raw_dir() / PITTS30K_PATH / "images" / "train",
+            ),
+            ReadGSVCitiesImagesStep(
+                data_root=raw_dir() / GSVCITIES_PATH,
+                source="gsvcities_prg",
+                cities=["PRG"],
+            ),
+            ComputeImageEmbeddingStep(
+                source="pitts30k", batch_size=128, num_workers=8
+            ),
+            ComputeImageEmbeddingStep(
+                source="gsvcities_prg", batch_size=128, num_workers=8
+            ),
+            AssignCuraVPRPlaceIdStep(
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
                 cos_sim_threshold=0.3,
                 min_images=4,
             ),
             AggregatePlaceEmbeddingStep(
-                image_embedding_name="gsvcities",
                 place_embedding_name=name,
                 reduction="mean",
                 normalize=True,
@@ -200,17 +276,18 @@ def build_sf_xl_gsvcities_cossim_train() -> Pipeline:
             ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
             ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ComputeImageEmbeddingStep(
-                image_embedding_name="sf_xl_gsvcities", batch_size=128, num_workers=8
+                source="sf_xl", batch_size=128, num_workers=8
+            ),
+            ComputeImageEmbeddingStep(
+                source="gsvcities", batch_size=128, num_workers=8
             ),
             AssignCuraVPRPlaceIdStep(
-                image_embedding_name="sf_xl_gsvcities",
                 cell_size_meters=10.0,
                 heading_size_degrees=30.0,
                 cos_sim_threshold=0.45,
                 min_images=6,
             ),
             AggregatePlaceEmbeddingStep(
-                image_embedding_name="sf_xl_gsvcities",
                 place_embedding_name=name,
                 reduction="mean",
                 normalize=True,

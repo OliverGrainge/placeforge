@@ -1,5 +1,5 @@
 from .readimages import ReadSFXLImagesStep, ReadMSLSImagesStep, ReadGSVCitiesImagesStep, ReadPitts30kImagesStep, ReadValImagesStep, ReadTestImagesStep
-from .placeids import AssignCuraVPRPlaceIdStep
+from .placeids import AssignCuraVPRPlaceIdStep, SubsamplePlacesStep
 from .supergroups import AssignCuraVPRSuperGroupStep
 from .save import SaveTrainDataset, SaveValDataset, SaveTestDataset
 from .matches import ComputeValMatchesStep, ComputeTestMatchesStep

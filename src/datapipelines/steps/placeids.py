@@ -77,14 +77,36 @@ def _assign_place_ids(
     return df
 
 
-def _load_image_embeddings(
-    cache: EmbeddingCache, df: pd.DataFrame
+def _merge_image_embeddings(
+    df: pd.DataFrame,
+    all_image_embs: dict[str, np.ndarray],
+    all_image_indices: dict[str, pd.Series],
 ) -> tuple[np.ndarray, pd.Series]:
-    """Return the memory-mapped embedding matrix and a series mapping image
-    IDs to their row indices in that matrix."""
-    image_embs = cache.mmap()
-    image_index = cache.load_index().set_index("id")["row"]
-    return image_embs, image_index
+    """Build a unified embedding matrix and index from per-source caches.
+
+    Returns an (N, D) array and a Series mapping image_id → row in that array,
+    covering all images in *df*.
+    """
+    emb_parts = []
+    index_ids = []
+    row_offset = 0
+
+    for source, source_df in df.groupby("source"):
+        embs = all_image_embs[source]
+        idx = all_image_indices[source]
+        source_rows = idx.loc[source_df["image_path"].values].values
+        emb_parts.append(embs[source_rows])
+        source_image_ids = source_df["image_id"].values
+        index_ids.extend(source_image_ids)
+        row_offset += len(source_image_ids)
+
+    merged_embs = np.concatenate(emb_parts, axis=0)
+    merged_index = pd.Series(
+        data=np.arange(len(index_ids)),
+        index=pd.Index(index_ids, name="id"),
+        name="row",
+    )
+    return merged_embs, merged_index
 
 
 def _build_groups(
@@ -130,9 +152,6 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
 
     Parameters
     ----------
-    image_embedding_name:
-        Sub-directory name under
-        ``$PLACEFORGE_FEATURE_STORE_DIR/embedding/image/``.
     cell_size_meters:
         Side length of the square spatial cells in metres.
     cos_sim_threshold:
@@ -149,7 +168,6 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
 
     def __init__(
         self,
-        image_embedding_name: str,
         cell_size_meters: float,
         cos_sim_threshold: float = 0.3,
         min_images: int = 2,
@@ -162,11 +180,9 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
         self.min_images = min_images
         self.use_heading = use_heading
         self.heading_size_degrees = heading_size_degrees
-        self.image_cache = _image_cache(image_embedding_name)
 
     def cache_params(self) -> dict[str, Any]:
         return {
-            "image_cache_dir": str(self.image_cache.cache_dir),
             "cell_size_meters": self.cell_size_meters,
             "cos_sim_threshold": self.cos_sim_threshold,
             "min_images": self.min_images,
@@ -243,14 +259,19 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
                     df.loc[missing_h, "heading"] / self.heading_size_degrees
                 ).apply(floor)
 
-        # --- Embedding-based coherence filtering (assigned places only) ----
-        # Places that arrived with a pre-existing place_id (e.g. GSV-Cities)
-        # are trusted and kept without filtering.
-        pre_assigned_places = set(
-            df.loc[~needs_assignment, "place_id"].unique()
-        )
+        # --- Embedding-based coherence filtering (all places) ---------------
+        # Load per-source image embedding caches and build a unified index
+        sources = df["source"].unique()
+        all_image_embs = {}
+        all_image_indices = {}
+        for source in sources:
+            cache = _image_cache(source)
+            all_image_embs[source] = cache.mmap()
+            all_image_indices[source] = cache.load_index().set_index("id")["row"]
 
-        image_embs, image_index = _load_image_embeddings(self.image_cache, df)
+        image_embs, image_index = _merge_image_embeddings(
+            df, all_image_embs, all_image_indices,
+        )
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         groups = _build_groups(df, image_index)
 
@@ -260,17 +281,6 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
         keep_mask = np.ones(len(df), dtype=bool)
 
         for df_indices, image_rows in groups:
-            place_id = df.iloc[df_indices[0]]["place_id"]
-
-            if place_id in pre_assigned_places:
-                # Skip coherence filtering but still enforce min_images.
-                if len(image_rows) < self.min_images:
-                    for idx in df_indices:
-                        keep_mask[idx] = False
-                if self.pbar is not None:
-                    self.pbar.update(1)
-                continue
-
             dropped = self._filter_place(image_embs[image_rows], device)
             n_surviving = len(image_rows) - len(dropped)
 
@@ -311,4 +321,55 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
             alive.pop(worst)
 
         return dropped
+
+
+# ---------------------------------------------------------------------------
+# Step – subsample places from a specific source
+# ---------------------------------------------------------------------------
+
+
+class SubsamplePlacesStep(BaseStep):
+    """Randomly keep a fraction of places from a given source.
+
+    Only images belonging to the targeted source are affected; images from
+    other sources pass through unchanged.  After removal, ``place_id`` is
+    re-factorised to stay contiguous.
+    """
+
+    def __init__(
+        self,
+        source: str,
+        fraction: float,
+        seed: int = 42,
+    ) -> None:
+        super().__init__()
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError(f"fraction must be in (0, 1], got {fraction}")
+        self.source = source
+        self.fraction = fraction
+        self.seed = seed
+
+    def cache_params(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "fraction": self.fraction,
+            "seed": self.seed,
+        }
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        df = context["traindataset"]
+
+        source_mask = df["source"] == self.source
+        source_places = df.loc[source_mask, "place_id"].unique()
+
+        rng = np.random.default_rng(self.seed)
+        n_keep = max(1, int(len(source_places) * self.fraction))
+        keep_places = set(rng.choice(source_places, size=n_keep, replace=False))
+
+        keep_mask = ~source_mask | df["place_id"].isin(keep_places)
+        df = df.loc[keep_mask].reset_index(drop=True)
+        df["place_id"] = pd.factorize(df["place_id"], sort=True)[0]
+        df["image_id"] = np.arange(len(df))
+
+        return {**context, "traindataset": df}
 

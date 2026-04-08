@@ -70,13 +70,23 @@ class AnalyseTrainDatasetStep(BaseStep):
         figures_dir = out_dir / "sample_places"
         figures_dir.mkdir(exist_ok=True)
 
-        place_ids = df["place_id"].unique()
         rng = random.Random(self.seed)
-        sampled = rng.sample(
-            list(place_ids), min(self.num_places, len(place_ids))
-        )
+        sampled: list[tuple[str, int]] = []
+        if "source" in df.columns:
+            for source, source_df in df.groupby("source"):
+                source_places = source_df["place_id"].unique()
+                n = min(self.num_places, len(source_places))
+                for pid in rng.sample(list(source_places), n):
+                    sampled.append((source, pid))
+        else:
+            place_ids = df["place_id"].unique()
+            for pid in rng.sample(list(place_ids), min(self.num_places, len(place_ids))):
+                sampled.append(("all", pid))
 
-        for place_id in sampled:
+        for source, place_id in sampled:
+            source_dir = figures_dir / source
+            source_dir.mkdir(parents=True, exist_ok=True)
+
             place_df = df[df["place_id"] == place_id]
             image_paths = place_df["image_path"].tolist()
 
@@ -91,7 +101,6 @@ class AnalyseTrainDatasetStep(BaseStep):
             )
 
             sg_id = place_df["supergroup_id"].iloc[0] if "supergroup_id" in place_df.columns else "?"
-            sources = sorted(place_df["source"].unique()) if "source" in place_df.columns else None
 
             for i, rel_path in enumerate(image_paths):
                 row, col = divmod(i, n_cols)
@@ -108,13 +117,10 @@ class AnalyseTrainDatasetStep(BaseStep):
                 row, col = divmod(i, n_cols)
                 axes[row][col].set_visible(False)
 
-            title = f"place {place_id}  (sg={sg_id}, {len(place_df)} images"
-            if sources is not None:
-                title += f", source={'+'.join(sources)}"
-            title += ")"
+            title = f"place {place_id}  (sg={sg_id}, {len(place_df)} images, source={source})"
             fig.suptitle(title, fontsize=10)
             fig.tight_layout()
-            fig.savefig(figures_dir / f"place_{place_id}.png", dpi=100, bbox_inches="tight")
+            fig.savefig(source_dir / f"place_{place_id}.png", dpi=100, bbox_inches="tight")
             plt.close(fig)
 
         print(f"  Saved {len(sampled)} place figures → {figures_dir}/")

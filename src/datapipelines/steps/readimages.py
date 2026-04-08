@@ -157,6 +157,20 @@ def _gsvcities_image_path(row: pd.Series, images_dir: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+
+def _validate_heading(df: pd.DataFrame, source: str) -> None:
+    """Raise if any images are missing a heading value."""
+    missing = df["heading"].isna().sum()
+    if missing > 0:
+        raise ValueError(
+            f"{source}: {missing} of {len(df)} images are missing a heading value"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Train steps
 # ---------------------------------------------------------------------------
 
@@ -169,8 +183,11 @@ class ReadSFXLImagesStep(BaseStep):
     def __init__(
         self,
         data_root: str | Path | list[str | Path],
+        source: str | None = None,
     ) -> None:
         super().__init__()
+        if source is not None:
+            self.source = source
         self.data_roots = (
             [Path(d) for d in data_root]
             if isinstance(data_root, list)
@@ -216,6 +233,7 @@ class ReadSFXLImagesStep(BaseStep):
                 self.pbar.update(1)
 
         df = pd.DataFrame(records)
+        _validate_heading(df, self.source)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(self.cache_path, index=False)
         return _merge_into_context(context, "traindataset", df)
@@ -233,8 +251,11 @@ class ReadMSLSImagesStep(BaseStep):
     def __init__(
         self,
         data_root: str | Path | list[str | Path],
+        source: str | None = None,
     ) -> None:
         super().__init__()
+        if source is not None:
+            self.source = source
         self.data_roots = (
             [Path(d) for d in data_root]
             if isinstance(data_root, list)
@@ -280,6 +301,7 @@ class ReadMSLSImagesStep(BaseStep):
                 self.pbar.update(1)
 
         df = pd.DataFrame(records)
+        _validate_heading(df, self.source)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(self.cache_path, index=False)
         return _merge_into_context(context, "traindataset", df)
@@ -316,10 +338,13 @@ class ReadPitts30kImagesStep(BaseStep):
     def __init__(
         self,
         data_root: str | Path | list[str | Path],
+        source: str | None = None,
         cell_size_m: float = 15.0,
         angle_bin_deg: float = 60.0,
     ) -> None:
         super().__init__()
+        if source is not None:
+            self.source = source
         self.data_roots = (
             [Path(d) for d in data_root]
             if isinstance(data_root, list)
@@ -383,6 +408,7 @@ class ReadPitts30kImagesStep(BaseStep):
                 self.pbar.update(1)
 
         df = pd.DataFrame(records)
+        _validate_heading(df, self.source)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(self.cache_path, index=False)
         return _merge_into_context(context, "traindataset", df)
@@ -455,9 +481,12 @@ class ReadGSVCitiesImagesStep(BaseStep):
     def __init__(
         self,
         data_root: str | Path,
+        source: str | None = None,
         cities: Sequence[str] | None = None,
     ) -> None:
         super().__init__()
+        if source is not None:
+            self.source = source
         self.data_root = Path(data_root)
         self.cities = tuple(sorted({city.strip() for city in cities if city.strip()})) if cities else None
         self.raw_dir = Path(os.environ["PLACEFORGE_RAW_DIR"])
