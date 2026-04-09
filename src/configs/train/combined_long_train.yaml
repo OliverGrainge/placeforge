@@ -52,7 +52,7 @@ datamodule:
   transform:
     name: heavy
     image_size: 224
-    augmentation: light
+    augmentation: heavy
   val_transform:
     name: eval
     image_size: 322
