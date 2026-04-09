@@ -136,3 +136,113 @@ for _dataset in ("gsvcities", "msls", "sf_xl"):
             return _build
 
         _factory()
+
+
+# ---------------------------------------------------------------------------
+# Combined: GSV-Cities + SF-XL + Pittsburgh 30k (baseline)
+# Original settings: cell_size=10m, N=5 → min separation = 50m
+# ---------------------------------------------------------------------------
+
+
+@register_pipeline("gsvcities_sf_xl_pitts30k_baseline_train", category="train")
+def build_gsvcities_sf_xl_pitts30k_baseline_train() -> Pipeline:
+    name = "gsvcities_sf_xl_pitts30k_baseline_train"
+    return Pipeline(
+        name,
+        steps=[
+            # --- Read all three sources ---
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadPitts30kImagesStep(data_root=raw_dir() / PITTS30K_PATH / "images" / "train"),
+            # --- Compute embeddings per source ---
+            ComputeImageEmbeddingStep(
+                source="gsvcities", batch_size=128, num_workers=8
+            ),
+            ComputeImageEmbeddingStep(
+                source="sf_xl", batch_size=128, num_workers=8
+            ),
+            ComputeImageEmbeddingStep(
+                source="pitts30k", batch_size=128, num_workers=8
+            ),
+            # --- Place-ID assignment + coherence filtering ---
+            AssignCuraVPRPlaceIdStep(
+                cell_size_meters=10.0,
+                heading_size_degrees=60.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+                use_heading=True,
+            ),
+            # --- Aggregate + supergroup ---
+            AggregatePlaceEmbeddingStep(
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=1024,
+                N=5,
+                L=2,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Combined: GSV-Cities + SF-XL + Pittsburgh 30k (clique-inspired)
+# Decision-boundary negatives: cell_size=12.5m, N=2 → min separation = 25m
+# ---------------------------------------------------------------------------
+
+
+@register_pipeline("gsvcities_sf_xl_pitts30k_clique_train", category="train")
+def build_gsvcities_sf_xl_pitts30k_clique_train() -> Pipeline:
+    name = "gsvcities_sf_xl_pitts30k_clique_train"
+    return Pipeline(
+        name,
+        steps=[
+            # --- Read all three sources ---
+            ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
+            ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
+            ReadPitts30kImagesStep(data_root=raw_dir() / PITTS30K_PATH / "images" / "train"),
+            # --- Compute embeddings per source ---
+            ComputeImageEmbeddingStep(
+                source="gsvcities", batch_size=128, num_workers=8
+            ),
+            ComputeImageEmbeddingStep(
+                source="sf_xl", batch_size=128, num_workers=8
+            ),
+            ComputeImageEmbeddingStep(
+                source="pitts30k", batch_size=128, num_workers=8
+            ),
+            # --- Place-ID assignment + coherence filtering ---
+            AssignCuraVPRPlaceIdStep(
+                cell_size_meters=12.5,
+                heading_size_degrees=60.0,
+                cos_sim_threshold=0.3,
+                min_images=4,
+                use_heading=True,
+            ),
+            # --- Aggregate + supergroup ---
+            AggregatePlaceEmbeddingStep(
+                place_embedding_name=name,
+                reduction="mean",
+                normalize=True,
+            ),
+            AssignCuraVPRSuperGroupStep(
+                place_embedding_name=name,
+                supergroup_size=1024,
+                N=2,
+                L=2,
+                kmeans_max_iter=100,
+                seed=42,
+            ),
+            SaveTrainDataset(name=name),
+            SummaryTrainDataset(name=name),
+            AnalyseTrainDatasetStep(name=name),
+        ],
+    )
