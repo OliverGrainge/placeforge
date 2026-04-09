@@ -54,6 +54,7 @@ def list_pipelines(category: PipelineCategory | None = None) -> tuple[str, ...]:
 
 # Import pipeline modules to trigger registration side-effects.
 from . import train
+from . import train_ablation
 from . import val
 from . import test
 

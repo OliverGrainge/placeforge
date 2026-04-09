@@ -5,6 +5,8 @@ description = "Place recognition and matching"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    # TensorBoard still imports pkg_resources; setuptools 82+ removed it.
+    "setuptools>=70,<82",
     # Core CLI and data pipeline
     "pandas",
     "pyarrow",

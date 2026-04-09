@@ -1,17 +1,52 @@
-"""Standalone SelaVPR trainable visual place recognition model."""
+"""Single-file SelaVPR++ model wrapper for training.
+
+This module implements the SelaVPR++ memory-efficient adaptation architecture:
+
+* DINOv2-B/14 or DINOv2-L/14 frozen backbone.
+* A parallel side adapter network of MultiConv adapters that progressively
+  refines intermediate backbone features *without* backpropagating through the
+  frozen backbone (Eq. 6 from the paper).
+* GeM, BoQ, or SALAD descriptor heads for float VPR descriptors.
+* Optional 512-D hashing branch with a separate side adapter network and a
+  straight-through binary layer.
+
+The model and train setup are kept in one place: ``setup_for_training`` freezes
+the foundation backbone and leaves the side adapter weights and task heads
+trainable.
+"""
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from functools import partial
-from typing import Dict, Optional, Tuple, Union
+from typing import Iterable, Literal, Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.init import trunc_normal_
+import torch.nn.functional as F
 
-_DINOV2_VITL14_PRETRAIN_URL = "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_pretrain.pth"
+
+BackboneName = Literal["dinov2-base", "dinov2-large"]
+AggregationName = Literal["gem", "boq", "salad"]
+TrainMode = Literal["standard", "hashing", "rerank"]
+
+_DINOV2_PRETRAIN_URLS: dict[BackboneName, str] = {
+    "dinov2-base": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth",
+    "dinov2-large": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_pretrain.pth",
+}
+
+
+@dataclass
+class SelaVPRConfig:
+    backbone: BackboneName = "dinov2-large"
+    aggregation: AggregationName = "gem"
+    hashing: bool = False
+    rerank: bool = False
+    foundation_model_path: Optional[str] = None
+    load_pretrained_backbone: bool = True
+    resume: bool = False
 
 
 def _make_2tuple(x: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
@@ -19,6 +54,11 @@ def _make_2tuple(x: Union[int, Tuple[int, int]]) -> Tuple[int, int]:
         assert len(x) == 2
         return x
     return (x, x)
+
+
+# ---------------------------------------------------------------------------
+# ViT building blocks (frozen backbone)
+# ---------------------------------------------------------------------------
 
 
 class DropPath(nn.Module):
@@ -110,8 +150,8 @@ class Attention(nn.Module):
     ) -> None:
         super().__init__()
         self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim**-0.5
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim**-0.5
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim, bias=proj_bias)
@@ -119,39 +159,20 @@ class Attention(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         batch, tokens, channels = x.shape
-        qkv = self.qkv(x).reshape(batch, tokens, 3, self.num_heads, channels // self.num_heads)
+        qkv = self.qkv(x).reshape(batch, tokens, 3, self.num_heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0] * self.scale, qkv[1], qkv[2]
-        attn = (q @ k.transpose(-2, -1)).softmax(dim=-1)
-        attn = self.attn_drop(attn)
-        x = (attn @ v).transpose(1, 2).reshape(batch, tokens, channels)
+        q, k, v = qkv.unbind(0)
+        x = F.scaled_dot_product_attention(
+            q, k, v, dropout_p=self.attn_drop.p if self.training else 0.0,
+        )
+        x = x.transpose(1, 2).reshape(batch, tokens, channels)
         x = self.proj(x)
         return self.proj_drop(x)
 
 
-class Adapter(nn.Module):
-    """SelaVPR adapter inserted into each transformer block."""
-
-    def __init__(
-        self,
-        features: int,
-        mlp_ratio: float = 0.75,
-        act_layer: type[nn.Module] = nn.ReLU,
-        skip_connect: bool = True,
-    ) -> None:
-        super().__init__()
-        self.skip_connect = skip_connect
-        hidden_features = int(features * mlp_ratio)
-        self.act = act_layer()
-        self.D_fc1 = nn.Linear(features, hidden_features)
-        self.D_fc2 = nn.Linear(hidden_features, features)
-
-    def forward(self, x: Tensor) -> Tensor:
-        residual = self.D_fc2(self.act(self.D_fc1(x)))
-        return x + residual if self.skip_connect else residual
-
-
 class Block(nn.Module):
+    """Standard ViT block (no adapters -- adapters live in the side network)."""
+
     def __init__(
         self,
         dim: int,
@@ -176,15 +197,16 @@ class Block(nn.Module):
         self.mlp = Mlp(dim, int(dim * mlp_ratio), act_layer=act_layer, drop=drop, bias=ffn_bias)
         self.ls2 = LayerScale(dim, init_values) if init_values else nn.Identity()
         self.drop_path2 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
-        self.adapter1 = Adapter(dim, mlp_ratio=0.5)
-        self.adapter2 = Adapter(dim, mlp_ratio=0.5, skip_connect=False)
 
     def forward(self, x: Tensor) -> Tensor:
-        attn_residual = self.ls1(self.adapter1(self.attn(self.norm1(x))))
-        x = x + self.drop_path1(attn_residual)
-        normed = self.norm2(x)
-        ffn_residual = self.ls2(self.mlp(normed) + 0.2 * self.adapter2(normed))
-        return x + self.drop_path2(ffn_residual)
+        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
+        x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
+        return x
+
+
+# ---------------------------------------------------------------------------
+# Frozen DINOv2 backbone
+# ---------------------------------------------------------------------------
 
 
 class DinoVisionTransformer(nn.Module):
@@ -202,16 +224,19 @@ class DinoVisionTransformer(nn.Module):
         proj_bias: bool = True,
         drop_path_rate: float = 0.0,
         init_values: Optional[float] = 1.0,
-        num_register_tokens: int = 0,
         interpolate_antialias: bool = False,
         interpolate_offset: float = 0.1,
+        block_chunks: int = 0,
     ) -> None:
         super().__init__()
+        if block_chunks != 0:
+            raise ValueError("This single-file wrapper only supports block_chunks=0")
+
         norm_layer = partial(nn.LayerNorm, eps=1e-6)
         self.embed_dim = embed_dim
         self.num_features = embed_dim
         self.num_tokens = 1
-        self.num_register_tokens = num_register_tokens
+        self.num_register_tokens = 0
         self.patch_size = patch_size
         self.interpolate_antialias = interpolate_antialias
         self.interpolate_offset = interpolate_offset
@@ -219,10 +244,6 @@ class DinoVisionTransformer(nn.Module):
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, self.patch_embed.num_patches + 1, embed_dim))
-        self.register_tokens = (
-            nn.Parameter(torch.zeros(1, num_register_tokens, embed_dim)) if num_register_tokens else None
-        )
-
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
         self.blocks = nn.ModuleList(
             [
@@ -247,8 +268,6 @@ class DinoVisionTransformer(nn.Module):
     def init_weights(self) -> None:
         trunc_normal_(self.pos_embed, std=0.02)
         nn.init.normal_(self.cls_token, std=1e-6)
-        if self.register_tokens is not None:
-            nn.init.normal_(self.register_tokens, std=1e-6)
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 trunc_normal_(module.weight, std=0.02)
@@ -297,32 +316,55 @@ class DinoVisionTransformer(nn.Module):
         if masks is not None:
             x = torch.where(masks.unsqueeze(-1), self.mask_token.to(x.dtype).unsqueeze(0), x)
         x = torch.cat((self.cls_token.expand(batch, -1, -1), x), dim=1)
-        x = x + self.interpolate_pos_encoding(x, height, width)
-        if self.register_tokens is not None:
-            x = torch.cat((x[:, :1], self.register_tokens.expand(batch, -1, -1), x[:, 1:]), dim=1)
-        return x
+        return x + self.interpolate_pos_encoding(x, height, width)
 
-    def forward_features(self, x: Tensor, masks: Optional[Tensor] = None) -> Dict[str, Optional[Tensor]]:
+    def forward_features(self, x: Tensor, masks: Optional[Tensor] = None) -> dict[str, Tensor | list[Tensor] | None]:
+        """Run the frozen backbone, returning intermediate block outputs.
+
+        Returns a dict with:
+        - ``block_outputs``: list of length ``depth + 1``.  Index 0 is the
+          prepared token sequence (before any block); indices 1..depth are
+          the outputs of each transformer block.
+        - ``x_norm_clstoken``, ``x_norm_patchtokens``, ``x_prenorm``: the
+          final backbone representations (after the last block + LayerNorm).
+        """
         x = self.prepare_tokens(x, masks)
+        block_outputs: list[Tensor] = [x]
         for block in self.blocks:
             x = block(x)
+            block_outputs.append(x)
         x_norm = self.norm(x)
         return {
+            "block_outputs": block_outputs,
             "x_norm_clstoken": x_norm[:, 0],
-            "x_norm_regtokens": x_norm[:, 1 : self.num_register_tokens + 1],
-            "x_norm_patchtokens": x_norm[:, self.num_register_tokens + 1 :],
+            "x_norm_patchtokens": x_norm[:, 1:],
             "x_prenorm": x,
             "masks": masks,
         }
 
-    def forward(self, x: Tensor, masks: Optional[Tensor] = None) -> Dict[str, Optional[Tensor]]:
+    def forward(self, x: Tensor, masks: Optional[Tensor] = None) -> dict[str, Tensor | list[Tensor] | None]:
         return self.forward_features(x, masks)
+
+
+def vit_base(
+    patch_size: int = 14,
+    img_size: int = 518,
+    **kwargs,
+) -> DinoVisionTransformer:
+    return DinoVisionTransformer(
+        patch_size=patch_size,
+        img_size=img_size,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        **kwargs,
+    )
 
 
 def vit_large(
     patch_size: int = 14,
     img_size: int = 518,
-    num_register_tokens: int = 0,
     **kwargs,
 ) -> DinoVisionTransformer:
     return DinoVisionTransformer(
@@ -332,20 +374,151 @@ def vit_large(
         depth=24,
         num_heads=16,
         mlp_ratio=4,
-        num_register_tokens=num_register_tokens,
         **kwargs,
     )
 
 
-class GeM(nn.Module):
-    def __init__(self, p: float = 3.0, eps: float = 1e-6) -> None:
+# ---------------------------------------------------------------------------
+# MultiConv adapter and side adapter network (SelaVPR++ Eq. 6)
+# ---------------------------------------------------------------------------
+
+
+class _BasicConv2d(nn.Module):
+    """Conv2d + BatchNorm2d + ReLU, matching the reference SelaVPR++ implementation."""
+
+    def __init__(self, in_channels: int, out_channels: int, **kwargs) -> None:
         super().__init__()
-        self.p = nn.Parameter(torch.ones(1) * p)
-        self.eps = eps
+        self.conv = nn.Conv2d(in_channels, out_channels, bias=True, **kwargs)
+        self.bn = nn.BatchNorm2d(out_channels, eps=0.001)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = F.avg_pool2d(x.clamp(min=self.eps).pow(self.p), (x.size(-2), x.size(-1))).pow(1.0 / self.p)
-        return x[:, :, 0, 0]
+        return F.relu(self.bn(self.conv(x)), inplace=True)
+
+
+class MultiConvAdapter(nn.Module):
+    """Multi-scale convolution adapter from the SelaVPR++ paper.
+
+    Three parallel conv paths (1x1, 3x3, 5x5) with BatchNorm between a
+    down-projection and an up-projection.  Operates on patch tokens reshaped
+    to a spatial grid; the CLS token is projected through D_fc1 and carried
+    along so the internal skip connection preserves it.
+    """
+
+    def __init__(self, features: int, bottleneck_ratio: float = 0.5, skip_connect: bool = False) -> None:
+        super().__init__()
+        self.skip_connect = skip_connect
+        hidden_features = max(1, int(features * bottleneck_ratio))
+        # Channel reduction dim before 3x3 and 5x5 convs
+        reduce_dim = max(1, int(24 * features / 768))
+
+        self.D_fc1 = nn.Linear(features, hidden_features)
+
+        # --- three parallel conv paths (inception-style with BN+ReLU) ---
+        out_a = hidden_features // 2  # 192 for base, 256 for large
+        self.branch1 = _BasicConv2d(hidden_features, out_a, kernel_size=1)
+
+        out_b = hidden_features // 4  # 96 for base, 128 for large
+        self.branch2 = nn.Sequential(
+            _BasicConv2d(hidden_features, reduce_dim, kernel_size=1),
+            _BasicConv2d(reduce_dim, out_b, kernel_size=3, padding=1),
+        )
+
+        out_c = hidden_features - out_a - out_b  # 96 for base, 128 for large
+        self.branch3 = nn.Sequential(
+            _BasicConv2d(hidden_features, reduce_dim, kernel_size=1),
+            _BasicConv2d(reduce_dim, out_c, kernel_size=5, padding=2),
+        )
+
+        self.D_fc2 = nn.Linear(hidden_features, features)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x0 = F.relu(self.D_fc1(x), inplace=False)
+        batch, tokens, dim = x0.shape
+        height = width = int(math.sqrt(tokens - 1))
+
+        # Patch tokens -> spatial grid for convolutions
+        xs = x0[:, 1:, :]
+        xs = xs.reshape(batch, height, width, dim).permute(0, 3, 1, 2)
+        b1 = self.branch1(xs)
+        b2 = self.branch2(xs)
+        b3 = self.branch3(xs)
+        outputs = torch.cat([b1, b2, b3], dim=1)
+        outputs = outputs.reshape(batch, dim, height * width).permute(0, 2, 1)
+
+        # Recombine with CLS token from projected features
+        cls_token = x0[:, :1, :]
+        outputs = torch.cat([cls_token, outputs], dim=1)
+
+        # Internal skip connection (add projected input back before D_fc2)
+        outputs = outputs + x0
+        outputs = self.D_fc2(outputs)
+
+        if self.skip_connect:
+            outputs = outputs + x
+        return outputs
+
+
+class SideAdapterNetwork(nn.Module):
+    """Parallel side network that progressively refines frozen backbone outputs.
+
+    Implements Eq. 6 from the SelaVPR++ paper::
+
+        y_1 = Adapter(x_0 + x_1) + x_0
+        y_l = Adapter(y_{l-1} + x_l) + y_{l-1}   for l >= 2
+
+    where ``x_0, x_1, ..., x_N`` are the frozen backbone intermediate outputs
+    and ``y_N`` is the final adapted representation.
+    """
+
+    def __init__(
+        self,
+        features: int,
+        num_adapters: int,
+        bottleneck_ratio: float = 0.5,
+    ) -> None:
+        super().__init__()
+        self.adapters = nn.ModuleList(
+            [MultiConvAdapter(features, bottleneck_ratio) for _ in range(num_adapters)]
+        )
+        self.norm = nn.LayerNorm(features, eps=1e-6)
+
+    def forward(self, block_outputs: list[Tensor]) -> Tensor:
+        """
+        Args:
+            block_outputs: list of length ``num_adapters + 1``.
+                Index 0 is the input to the first adapted block (x_0).
+                Indices 1..N are the outputs of the N adapted backbone blocks.
+        """
+        y: Tensor = None  # type: ignore[assignment]
+        for l, adapter in enumerate(self.adapters):
+            x_prev = block_outputs[l]
+            x_curr = block_outputs[l + 1]
+            if l == 0:
+                y = adapter(x_prev + x_curr) + x_prev
+            else:
+                y = adapter(y + x_curr) + y
+        return self.norm(y)
+
+
+# ---------------------------------------------------------------------------
+# Hashing utilities
+# ---------------------------------------------------------------------------
+
+
+class STEBinary(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: Tensor) -> Tensor:
+        ctx.save_for_backward(x)
+        return torch.where(x >= 0, torch.ones_like(x), -torch.ones_like(x))
+
+    @staticmethod
+    def backward(ctx, grad_output: Tensor) -> Tensor:
+        return grad_output
+
+
+# ---------------------------------------------------------------------------
+# Aggregation heads
+# ---------------------------------------------------------------------------
 
 
 class L2Norm(nn.Module):
@@ -357,166 +530,616 @@ class L2Norm(nn.Module):
         return F.normalize(x, p=2, dim=self.dim)
 
 
-class LocalAdapt(nn.Module):
-    def __init__(self, in_channels: int = 1024, hidden_channels: int = 256, out_channels: int = 128) -> None:
+class Flatten(nn.Module):
+    def forward(self, x: Tensor) -> Tensor:
+        assert x.shape[2] == x.shape[3] == 1
+        return x[:, :, 0, 0]
+
+
+class GeM(nn.Module):
+    def __init__(self, p: float = 3.0, eps: float = 1e-6) -> None:
         super().__init__()
-        self.upconv1 = nn.ConvTranspose2d(in_channels, hidden_channels, kernel_size=3, stride=2, padding=1)
-        self.upconv2 = nn.ConvTranspose2d(hidden_channels, out_channels, kernel_size=3, stride=2, padding=1)
-        self.relu = nn.ReLU(inplace=True)
+        self.p = nn.Parameter(torch.ones(1) * p)
+        self.eps = eps
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.relu(self.upconv1(x))
-        return self.upconv2(x)
+        x = x.clamp(min=self.eps).pow(self.p)
+        x = F.avg_pool2d(x, (x.size(-2), x.size(-1)))
+        return x.pow(1.0 / self.p)
 
 
-class SelaVPR(nn.Module):
+class BoQBlock(nn.Module):
+    def __init__(self, in_dim: int, num_queries: int, nheads: int = 8) -> None:
+        super().__init__()
+        self.encoder = nn.TransformerEncoderLayer(
+            d_model=in_dim,
+            nhead=nheads,
+            dim_feedforward=4 * in_dim,
+            batch_first=True,
+            dropout=0.0,
+        )
+        self.queries = nn.Parameter(torch.randn(1, num_queries, in_dim))
+        self.self_attn = nn.MultiheadAttention(in_dim, num_heads=nheads, batch_first=True)
+        self.norm_q = nn.LayerNorm(in_dim)
+        self.cross_attn = nn.MultiheadAttention(in_dim, num_heads=nheads, batch_first=True)
+        self.norm_out = nn.LayerNorm(in_dim)
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        x = self.encoder(x)
+        q = self.queries.repeat(x.size(0), 1, 1)
+        q = self.norm_q(q + self.self_attn(q, q, q)[0])
+        out = self.norm_out(self.cross_attn(q, x, x)[0])
+        return x, out
+
+
+class BoQ(nn.Module):
     def __init__(
         self,
-        registers: bool = False,
-        hash_bits: Optional[int] = None,
-        pretrained_path: Optional[str] = None,
-        pretrained_url: str = _DINOV2_VITL14_PRETRAIN_URL,
-        load_pretrained_backbone: bool = True,
-        freeze_backbone_except_adapters: bool = True,
-        zero_init_adapters: bool = True,
+        in_channels: int,
+        proj_channels: int = 384,
+        num_queries: int = 64,
+        num_layers: int = 2,
+        row_dim: int = 32,
     ) -> None:
         super().__init__()
-        self.backbone = vit_large(patch_size=14, img_size=518, init_values=1.0, num_register_tokens=4 if registers else 0)
-        self.aggregation = nn.Sequential(L2Norm(dim=1), GeM())
-        self.local_adapt = LocalAdapt(in_channels=1024, out_channels=128)
-        self.hash_head = nn.Linear(1024, hash_bits) if hash_bits is not None else None
-        self.features_dim = 1024
-        self.descriptor_dim = 1024
+        self.proj_c = nn.Conv2d(in_channels, proj_channels, kernel_size=3, padding=1)
+        self.norm_input = nn.LayerNorm(proj_channels)
+        self.boqs = nn.ModuleList(
+            [BoQBlock(proj_channels, num_queries, nheads=proj_channels // 64) for _ in range(num_layers)]
+        )
+        self.fc = nn.Linear(num_layers * num_queries, row_dim)
 
-        if load_pretrained_backbone:
-            self.load_pretrained_backbone(pretrained_path or pretrained_url)
-        if zero_init_adapters:
-            self.init_adapters_zero()
-        if freeze_backbone_except_adapters:
-            self.freeze_backbone_except_adapters()
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.proj_c(x).flatten(2).permute(0, 2, 1)
+        x = self.norm_input(x)
+        outs = []
+        for boq in self.boqs:
+            x, out = boq(x)
+            outs.append(out)
+        out = torch.cat(outs, dim=1)
+        out = self.fc(out.permute(0, 2, 1)).flatten(1)
+        return F.normalize(out, p=2, dim=-1)
+
+
+def log_otp_solver(log_a: Tensor, log_b: Tensor, scores: Tensor, num_iters: int = 20, reg: float = 1.0) -> Tensor:
+    scores = scores / reg
+    u, v = torch.zeros_like(log_a), torch.zeros_like(log_b)
+    for _ in range(num_iters):
+        u = log_a - torch.logsumexp(scores + v.unsqueeze(1), dim=2).squeeze()
+        v = log_b - torch.logsumexp(scores + u.unsqueeze(2), dim=1).squeeze()
+    return scores + u.unsqueeze(2) + v.unsqueeze(1)
+
+
+def get_matching_probs(scores: Tensor, dustbin_score: Tensor, num_iters: int = 3, reg: float = 1.0) -> Tensor:
+    batch_size, m, n = scores.size()
+    scores_aug = torch.empty(batch_size, m + 1, n, dtype=scores.dtype, device=scores.device)
+    scores_aug[:, :m, :n] = scores
+    scores_aug[:, m, :] = dustbin_score
+
+    norm = -torch.tensor(math.log(n + m), device=scores.device)
+    log_a = norm.expand(m + 1).contiguous()
+    log_b = norm.expand(n).contiguous()
+    log_a[-1] = log_a[-1] + math.log(n - m)
+    log_a = log_a.expand(batch_size, -1)
+    log_b = log_b.expand(batch_size, -1)
+    return log_otp_solver(log_a, log_b, scores_aug, num_iters=num_iters, reg=reg) - norm
+
+
+class SALAD(nn.Module):
+    def __init__(
+        self,
+        num_channels: int,
+        num_clusters: int = 64,
+        cluster_dim: int = 128,
+        token_dim: int = 256,
+        dropout: float = 0.3,
+    ) -> None:
+        super().__init__()
+        self.num_clusters = num_clusters
+        self.cluster_dim = cluster_dim
+        dropout_layer = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.token_features = nn.Sequential(nn.Linear(num_channels, 512), nn.ReLU(), nn.Linear(512, token_dim))
+        self.cluster_features = nn.Sequential(
+            nn.Conv2d(num_channels, 512, 1),
+            dropout_layer,
+            nn.ReLU(),
+            nn.Conv2d(512, cluster_dim, 1),
+        )
+        self.score = nn.Sequential(
+            nn.Conv2d(num_channels, 512, 1),
+            dropout_layer,
+            nn.ReLU(),
+            nn.Conv2d(512, num_clusters, 1),
+        )
+        self.dust_bin = nn.Parameter(torch.tensor(1.0))
+
+    def forward(self, x: tuple[Tensor, Tensor]) -> Tensor:
+        patch_tokens, cls_token = x
+        f = self.cluster_features(patch_tokens).flatten(2)
+        p = self.score(patch_tokens).flatten(2)
+        t = self.token_features(cls_token)
+
+        p = torch.exp(get_matching_probs(p, self.dust_bin, num_iters=3))
+        p = p[:, :-1, :]
+        p = p.unsqueeze(1).repeat(1, self.cluster_dim, 1, 1)
+        f = f.unsqueeze(2).repeat(1, 1, self.num_clusters, 1)
+        descriptor = torch.cat(
+            [
+                F.normalize(t, p=2, dim=-1),
+                F.normalize((f * p).sum(dim=-1), p=2, dim=1).flatten(1),
+            ],
+            dim=-1,
+        )
+        return F.normalize(descriptor, p=2, dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# SelaVPR++ trainable model
+# ---------------------------------------------------------------------------
+
+
+# Per-backbone adapter configuration: (start_block, num_adapters)
+_ADAPTER_CFG: dict[BackboneName, tuple[int, int]] = {
+    "dinov2-base": (0, 12),   # all 12 blocks
+    "dinov2-large": (8, 16),  # last 16 of 24 blocks
+}
+
+
+class SelaVPRTrainable(nn.Module):
+    def __init__(
+        self,
+        config: Optional[SelaVPRConfig] = None,
+        *,
+        backbone: BackboneName = "dinov2-large",
+        aggregation: AggregationName = "gem",
+        hashing: bool = False,
+        rerank: bool = False,
+        foundation_model_path: Optional[str] = None,
+        pretrained_url: Optional[str] = None,
+        load_pretrained_backbone: bool = True,
+        resume: bool = False,
+        setup_training: bool = False,
+    ) -> None:
+        super().__init__()
+        self.config = config or SelaVPRConfig(
+            backbone=backbone,
+            aggregation=aggregation,
+            hashing=hashing,
+            rerank=rerank,
+            foundation_model_path=foundation_model_path,
+            load_pretrained_backbone=load_pretrained_backbone,
+            resume=resume,
+        )
+        self.pretrained_url = pretrained_url
+        self.hashing = self.config.hashing
+        self.rerank = self.config.rerank
+        self.aggregation_name = self.config.aggregation
+        self.backbone = self._make_backbone()
+
+        input_dim = self.input_dim
+        output_dim = 2048 if input_dim == 768 else 4096
+        self.descriptor_dim = self.float_descriptor_dim
+
+        # --- Side adapter network(s) ---
+        start_block, num_adapters = _ADAPTER_CFG[self.config.backbone]
+        self._adapter_start = start_block
+
+        if not self.hashing or self.rerank:
+            self.side_adapter = SideAdapterNetwork(input_dim, num_adapters)
+            self.aggregation = self._make_float_aggregation(input_dim)
+            if self.aggregation_name == "gem":
+                self.linear1 = nn.Linear(input_dim, input_dim)
+                self.linear2 = nn.Linear(input_dim, output_dim)
+
+        if self.hashing:
+            self.side_adapter_hashing = SideAdapterNetwork(input_dim, num_adapters)
+            self.aggregation_hashing = nn.Sequential(L2Norm(), GeM(), Flatten())
+            self.linear3 = nn.Linear(input_dim, input_dim)
+            self.linear4 = nn.Linear(input_dim, 512)
+
+        if setup_training:
+            self.setup_for_training()
 
     @property
     def feature_dim(self) -> int:
         return self.descriptor_dim
 
-    @staticmethod
-    def _remove_prefix(text: str, prefix: str) -> str:
-        return text[len(prefix) :] if text.startswith(prefix) else text
+    @property
+    def input_dim(self) -> int:
+        if self.config.backbone == "dinov2-base":
+            return 768
+        if self.config.backbone == "dinov2-large":
+            return 1024
+        raise ValueError(f"Unknown backbone: {self.config.backbone}")
 
-    def freeze_backbone_except_adapters(self) -> None:
-        for name, param in self.backbone.named_parameters():
-            if "adapter" not in name:
-                param.requires_grad = False
+    @property
+    def float_descriptor_dim(self) -> int:
+        if self.aggregation_name == "gem":
+            return 2048 if self.input_dim == 768 else 4096
+        if self.aggregation_name == "boq":
+            return 12288
+        if self.aggregation_name == "salad":
+            return 8448
+        raise ValueError(f"Unknown aggregation: {self.aggregation_name}")
 
-    def init_adapters_zero(self) -> None:
-        """Match SelaVPR training initialization for adapter output layers."""
-        for name, module in self.named_modules():
-            if "adapter" in name and name.endswith("D_fc2") and isinstance(module, nn.Linear):
-                nn.init.constant_(module.weight, 0.0)
-                nn.init.constant_(module.bias, 0.0)
+    @property
+    def binary_descriptor_dim(self) -> int:
+        return 512
 
-    @staticmethod
-    def _load_state_dict(location: str) -> dict[str, Tensor]:
-        if location.startswith(("http://", "https://")):
-            state = torch.hub.load_state_dict_from_url(location, map_location="cpu", progress=True)
+    def _make_backbone(self) -> nn.Module:
+        if self.config.backbone == "dinov2-base":
+            backbone = vit_base(patch_size=14, img_size=518, init_values=1, block_chunks=0)
+        elif self.config.backbone == "dinov2-large":
+            backbone = vit_large(patch_size=14, img_size=518, init_values=1, block_chunks=0)
         else:
-            state = torch.load(location, map_location="cpu")
+            raise ValueError(f"Unknown backbone: {self.config.backbone}")
+
+        if not self.config.resume and (self.config.foundation_model_path or self.config.load_pretrained_backbone):
+            state = self._load_backbone_state()
+            state = {self._remove_prefix(self._remove_prefix(k, "module."), "backbone."): v for k, v in state.items()}
+            current = backbone.state_dict()
+            compatible = {k: v for k, v in state.items() if k in current and current[k].shape == v.shape}
+            current.update(compatible)
+            backbone.load_state_dict(current)
+        return backbone
+
+    def _load_backbone_state(self) -> dict[str, Tensor]:
+        if self.config.foundation_model_path:
+            state = torch.load(self.config.foundation_model_path, map_location="cpu")
+        else:
+            state = torch.hub.load_state_dict_from_url(
+                self.pretrained_url or _DINOV2_PRETRAIN_URLS[self.config.backbone],
+                map_location="cpu",
+                progress=True,
+            )
         if isinstance(state, dict) and "model_state_dict" in state:
             state = state["model_state_dict"]
         if isinstance(state, dict) and "state_dict" in state:
             state = state["state_dict"]
         return state
 
-    def load_pretrained_backbone(self, location: str, strict: bool = False) -> None:
-        state = self._load_state_dict(location)
-        state = {self._remove_prefix(self._remove_prefix(k, "module."), "backbone."): v for k, v in state.items()}
-        current = self.backbone.state_dict()
-        compatible = {k: v for k, v in state.items() if k in current and current[k].shape == v.shape}
-        mismatched = [k for k, v in state.items() if k in current and current[k].shape != v.shape]
-        unexpected = [k for k in state if k not in current]
-        missing = [k for k in current if k not in compatible]
-        current.update(compatible)
-        self.backbone.load_state_dict(current, strict=strict)
-        print(
-            "Loaded pretrained SelaVPR backbone weights "
-            f"from {location} ({len(compatible)}/{len(current)} tensors matched; "
-            f"{len(missing)} missing, {len(mismatched)} shape-mismatched, {len(unexpected)} unexpected)."
-        )
+    @staticmethod
+    def _remove_prefix(text: str, prefix: str) -> str:
+        return text[len(prefix):] if text.startswith(prefix) else text
 
-    def load_selavpr_checkpoint(self, path: str, strict: bool = False) -> None:
+    def _make_float_aggregation(self, input_dim: int) -> nn.Module:
+        if self.aggregation_name == "gem":
+            return nn.Sequential(L2Norm(), GeM(), Flatten())
+        if self.aggregation_name == "boq":
+            return BoQ(in_channels=input_dim, proj_channels=384, num_queries=64, num_layers=2, row_dim=32)
+        if self.aggregation_name == "salad":
+            return SALAD(num_channels=input_dim, num_clusters=64, cluster_dim=128, token_dim=256)
+        raise ValueError(f"Unknown aggregation: {self.aggregation_name}")
+
+    # ------------------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------------------
+
+    def forward(self, x: Tensor) -> Tensor | tuple[Tensor, Tensor] | tuple[Tensor, Tensor, Tensor]:
+        # Run frozen backbone -- no gradients needed through it
+        with torch.no_grad():
+            features = self.backbone(x)
+
+        block_outputs: list[Tensor] = features["block_outputs"]
+        # Slice to the blocks covered by adapters (includes the input = output
+        # of the preceding block).  E.g. for large: block_outputs[8:] gives 17
+        # tensors for 16 adapters.
+        relevant = block_outputs[self._adapter_start:]
+
+        if not self.hashing:
+            adapted = self.side_adapter(relevant)
+            return self._float_descriptor(adapted)
+
+        if self.hashing and not self.rerank:
+            adapted_h = self.side_adapter_hashing(relevant)
+            z = self._hash_descriptor(adapted_h)
+            return z, STEBinary.apply(z)
+
+        # rerank: both float and hash branches
+        adapted = self.side_adapter(relevant)
+        adapted_h = self.side_adapter_hashing(relevant)
+        x_g = self._float_descriptor(adapted)
+        z = self._hash_descriptor(adapted_h)
+        return z, STEBinary.apply(z), x_g
+
+    def _tokens_to_grid(self, tokens: Tensor) -> Tensor:
+        batch_size, patches, dim = tokens.shape
+        width = height = int(math.sqrt(patches))
+        if width * height != patches:
+            raise ValueError(f"Expected a square patch grid, got {patches} tokens")
+        return tokens.view(batch_size, width, height, dim).permute(0, 3, 1, 2)
+
+    def _float_descriptor(self, adapted: Tensor) -> Tensor:
+        """Produce a float descriptor from side-adapter output (CLS + patches)."""
+        x_patch = adapted[:, 1:]   # drop CLS token
+        x_cls = adapted[:, 0]
+        x_grid = self._tokens_to_grid(x_patch)
+
+        if self.aggregation_name == "gem":
+            x_g = self.linear1(x_patch.view(x_grid.size(0), x_grid.size(2), x_grid.size(3), x_grid.size(1)))
+            x_g = x_g.permute(0, 3, 1, 2)
+            x_g = self.aggregation(x_g)
+            x_g = self.linear2(x_g)
+        elif self.aggregation_name == "boq":
+            x_g = self.aggregation(x_grid)
+        elif self.aggregation_name == "salad":
+            x_g = self.aggregation((x_grid, x_cls))
+        else:
+            raise ValueError(f"Unknown aggregation: {self.aggregation_name}")
+
+        return F.normalize(x_g, p=2, dim=-1)
+
+    def _hash_descriptor(self, adapted: Tensor) -> Tensor:
+        """Produce a hash descriptor from side-adapter-hashing output."""
+        z_patch = adapted[:, 1:]
+        z_grid = self._tokens_to_grid(z_patch)
+        z = self.linear3(z_patch.view(z_grid.size(0), z_grid.size(2), z_grid.size(3), z_grid.size(1)))
+        z = z.permute(0, 3, 1, 2)
+        z = self.aggregation_hashing(z)
+        z = self.linear4(z)
+        return F.normalize(z, p=2, dim=-1)
+
+    # ------------------------------------------------------------------
+    # Training setup
+    # ------------------------------------------------------------------
+
+    def setup_for_training(self, mode: Optional[TrainMode] = None, initialize_adapters: bool = True) -> None:
+        """Set ``requires_grad`` to match the SelaVPR++ training protocol."""
+        if mode is None:
+            if self.hashing and self.rerank:
+                mode = "rerank"
+            elif self.hashing:
+                mode = "hashing"
+            else:
+                mode = "standard"
+
+        # Freeze everything first
+        for param in self.parameters():
+            param.requires_grad = False
+
+        if mode in {"standard", "hashing"}:
+            # Unfreeze side adapter(s) and all non-backbone parameters
+            for name, param in self.named_parameters():
+                if not name.startswith("backbone."):
+                    param.requires_grad = True
+            if initialize_adapters:
+                self.initialize_adapters()
+        elif mode == "rerank":
+            # Copy float adapter weights to hashing adapter, then only train hashing branch
+            if hasattr(self, "side_adapter") and hasattr(self, "side_adapter_hashing"):
+                self.side_adapter_hashing.load_state_dict(self.side_adapter.state_dict())
+            for name, param in self.named_parameters():
+                if (
+                    name.startswith("side_adapter_hashing.")
+                    or name.startswith("linear3.")
+                    or name.startswith("linear4.")
+                    or name.startswith("aggregation_hashing.")
+                ):
+                    param.requires_grad = True
+        else:
+            raise ValueError(f"Unknown training mode: {mode}")
+
+    def initialize_adapters(self) -> None:
+        """Initialize adapter weights the same way as the SelaVPR++ training scripts."""
+        targets = [self.side_adapter] if hasattr(self, "side_adapter") else []
+        if hasattr(self, "side_adapter_hashing"):
+            targets.append(self.side_adapter_hashing)
+
+        for network in targets:
+            for module_name, module in network.named_modules():
+                if isinstance(module, MultiConvAdapter):
+                    # Zero-init the up-projection so adapters start as identity
+                    nn.init.constant_(module.D_fc2.weight, 0.0)
+                    nn.init.constant_(module.D_fc2.bias, 0.0)
+                    # Near-zero init for conv weights
+                    for child_name, child in module.named_modules():
+                        if isinstance(child, nn.Conv2d):
+                            nn.init.constant_(child.weight, 0.00001)
+                            if child.bias is not None:
+                                nn.init.constant_(child.bias, 0.00001)
+
+    def trainable_parameters(self) -> Iterable[nn.Parameter]:
+        return (param for param in self.parameters() if param.requires_grad)
+
+    def parameter_report(self) -> dict[str, float]:
+        total = sum(param.numel() for param in self.parameters()) / 1e6
+        backbone = sum(param.numel() for param in self.backbone.parameters()) / 1e6
+        trainable = sum(param.numel() for param in self.parameters() if param.requires_grad) / 1e6
+        trainable_backbone = sum(param.numel() for param in self.backbone.parameters() if param.requires_grad) / 1e6
+        return {
+            "total_m": total,
+            "backbone_m": backbone,
+            "head_m": total - backbone,
+            "trainable_m": trainable,
+            "trainable_backbone_m": trainable_backbone,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Public variant classes and factory functions
+# ---------------------------------------------------------------------------
+
+
+class SelaVPR(SelaVPRTrainable):
+    """Backward-compatible repo export for the new SelaVPR++ trainable wrapper."""
+
+    def __init__(
+        self,
+        *,
+        backbone: BackboneName = "dinov2-large",
+        aggregation: AggregationName = "gem",
+        hashing: bool = False,
+        rerank: bool = False,
+        foundation_model_path: Optional[str] = None,
+        resume: bool = False,
+        setup_training: bool = False,
+        pretrained_path: Optional[str] = None,
+        pretrained_url: Optional[str] = None,
+        load_pretrained_backbone: bool = True,
+        checkpoint_path: Optional[str] = None,
+        hash_bits: Optional[int] = None,
+        registers: bool = False,
+        **_unused_legacy_kwargs: object,
+    ) -> None:
+        if registers:
+            raise ValueError("SelaVPR++ does not use DINO register tokens in this wrapper")
+        if hash_bits is not None and hash_bits != 512:
+            raise ValueError("SelaVPR++ hashing branch is fixed at 512 dimensions")
+        super().__init__(
+            backbone=backbone,
+            aggregation=aggregation,
+            hashing=hashing or hash_bits is not None,
+            rerank=rerank,
+            foundation_model_path=foundation_model_path or pretrained_path,
+            pretrained_url=pretrained_url,
+            load_pretrained_backbone=load_pretrained_backbone,
+            resume=resume,
+            setup_training=setup_training,
+        )
+        if checkpoint_path is not None:
+            self.load_checkpoint(checkpoint_path, strict=False)
+
+    def load_checkpoint(self, path: str, strict: bool = False) -> None:
         state = torch.load(path, map_location="cpu")
         if isinstance(state, dict) and "model_state_dict" in state:
             state = state["model_state_dict"]
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
         state = {self._remove_prefix(k, "module."): v for k, v in state.items()}
         self.load_state_dict(state, strict=strict)
 
-    def _patch_feature(self, x: Tensor) -> Tensor:
-        features = self.backbone(x)
-        patch_tokens = features["x_norm_patchtokens"]
-        assert isinstance(patch_tokens, Tensor)
-        batch, tokens, channels = patch_tokens.shape
-        grid = int(math.sqrt(tokens))
-        assert grid * grid == tokens, f"Expected a square patch grid, got {tokens} tokens"
-        return patch_tokens.reshape(batch, grid, grid, channels).permute(0, 3, 1, 2)
-
-    def _global_feature(self, patch_feature: Tensor) -> Tensor:
-        return F.normalize(self.aggregation(patch_feature), p=2, dim=-1)
-
-    def _local_feature(self, patch_feature: Tensor) -> Tensor:
-        local_feature = self.local_adapt(patch_feature).permute(0, 2, 3, 1)
-        return F.normalize(local_feature, p=2, dim=-1)
-
-    def forward_features(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        patch_feature = self._patch_feature(x)
-        return self._local_feature(patch_feature), self._global_feature(patch_feature)
-
-    def forward(
-        self,
-        x: Tensor,
-        *,
-        return_local: bool = False,
-        return_hash: bool = False,
-    ) -> Tensor | tuple[Tensor, Tensor] | tuple[Tensor, Tensor, Tensor]:
-        patch_feature = self._patch_feature(x)
-        global_feature = self._global_feature(patch_feature)
-
-        if return_hash:
-            if self.hash_head is None:
-                raise RuntimeError("SelaVPR was constructed without hash_bits, so no hash head exists.")
-            local_feature = self._local_feature(patch_feature)
-            hash_feature = torch.tanh(self.hash_head(global_feature))
-            return local_feature, global_feature, hash_feature
-        if return_local:
-            local_feature = self._local_feature(patch_feature)
-            return local_feature, global_feature
-        return global_feature
+    def load_selavpr_checkpoint(self, path: str, strict: bool = False) -> None:
+        self.load_checkpoint(path, strict=strict)
 
 
-def build_selavpr(
-    registers: bool = False,
-    pretrained_path: Optional[str] = None,
-    pretrained_url: str = _DINOV2_VITL14_PRETRAIN_URL,
-    checkpoint_path: Optional[str] = None,
-    hash_bits: Optional[int] = None,
+class _SelaVPRVariant(SelaVPR):
+    backbone_name: BackboneName
+    aggregation_name: AggregationName
+
+    def __init__(self, **kwargs: object) -> None:
+        backbone = kwargs.pop("backbone", self.backbone_name)
+        aggregation = kwargs.pop("aggregation", self.aggregation_name)
+        kwargs.setdefault("setup_training", True)
+        if backbone != self.backbone_name:
+            raise ValueError(f"{type(self).__name__} is fixed to backbone={self.backbone_name!r}")
+        if aggregation != self.aggregation_name:
+            raise ValueError(f"{type(self).__name__} is fixed to aggregation={self.aggregation_name!r}")
+        super().__init__(backbone=self.backbone_name, aggregation=self.aggregation_name, **kwargs)
+
+
+class SelaVPRBaseBoQ(_SelaVPRVariant):
+    backbone_name = "dinov2-base"
+    aggregation_name = "boq"
+
+
+class SelaVPRLargeBoQ(_SelaVPRVariant):
+    backbone_name = "dinov2-large"
+    aggregation_name = "boq"
+
+
+class SelaVPRBaseGeM(_SelaVPRVariant):
+    backbone_name = "dinov2-base"
+    aggregation_name = "gem"
+
+
+class SelaVPRLargeGeM(_SelaVPRVariant):
+    backbone_name = "dinov2-large"
+    aggregation_name = "gem"
+
+
+class SelaVPRBaseSALAD(_SelaVPRVariant):
+    backbone_name = "dinov2-base"
+    aggregation_name = "salad"
+
+
+class SelaVPRLargeSALAD(_SelaVPRVariant):
+    backbone_name = "dinov2-large"
+    aggregation_name = "salad"
+
+
+def build_selavpr_for_training(
+    *,
+    backbone: BackboneName = "dinov2-large",
+    aggregation: AggregationName = "gem",
+    foundation_model_path: Optional[str] = None,
+    pretrained_url: Optional[str] = None,
     load_pretrained_backbone: bool = True,
-    freeze_backbone_except_adapters: bool = True,
-    zero_init_adapters: bool = True,
-) -> SelaVPR:
-    model = SelaVPR(
-        registers=registers,
-        hash_bits=hash_bits,
-        pretrained_path=pretrained_path,
+    hashing: bool = False,
+    rerank: bool = False,
+    mode: Optional[TrainMode] = None,
+) -> SelaVPRTrainable:
+    model = SelaVPRTrainable(
+        backbone=backbone,
+        aggregation=aggregation,
+        foundation_model_path=foundation_model_path,
         pretrained_url=pretrained_url,
         load_pretrained_backbone=load_pretrained_backbone,
-        freeze_backbone_except_adapters=freeze_backbone_except_adapters,
-        zero_init_adapters=zero_init_adapters,
+        hashing=hashing,
+        rerank=rerank,
     )
-    if checkpoint_path is not None:
-        model.load_selavpr_checkpoint(checkpoint_path, strict=False)
+    model.setup_for_training(mode=mode)
     return model
 
 
+def build_selavpr(
+    *,
+    backbone: BackboneName = "dinov2-large",
+    aggregation: AggregationName = "gem",
+    foundation_model_path: Optional[str] = None,
+    pretrained_path: Optional[str] = None,
+    pretrained_url: Optional[str] = None,
+    load_pretrained_backbone: bool = True,
+    checkpoint_path: Optional[str] = None,
+    hashing: bool = False,
+    rerank: bool = False,
+    mode: Optional[TrainMode] = None,
+    setup_training: bool = False,
+    hash_bits: Optional[int] = None,
+    registers: bool = False,
+    **legacy_kwargs: object,
+) -> SelaVPR:
+    model = SelaVPR(
+        backbone=backbone,
+        aggregation=aggregation,
+        foundation_model_path=foundation_model_path or pretrained_path,
+        pretrained_url=pretrained_url,
+        load_pretrained_backbone=load_pretrained_backbone,
+        hashing=hashing or hash_bits is not None,
+        rerank=rerank,
+        hash_bits=hash_bits,
+        registers=registers,
+        setup_training=False,
+        **legacy_kwargs,
+    )
+    if checkpoint_path is not None:
+        model.load_selavpr_checkpoint(checkpoint_path, strict=False)
+    if setup_training or mode is not None:
+        model.setup_for_training(mode=mode)
+    return model
+
+
+def build_optimizer(
+    model: SelaVPRTrainable,
+    *,
+    optim: Literal["adam", "sgd", "adamw"] = "adam",
+    lr: float = 4e-4,
+    weight_decay: float = 9.5e-9,
+) -> torch.optim.Optimizer:
+    params = list(model.trainable_parameters())
+    if optim == "adam":
+        return torch.optim.Adam(params, lr=lr)
+    if optim == "sgd":
+        return torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=0.001)
+    if optim == "adamw":
+        return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+    raise ValueError(f"Unknown optimizer: {optim}")
+
+
 __all__ = [
-    "SelaVPR",
-    "build_selavpr",
+    "SelaVPRBaseBoQ",
+    "SelaVPRBaseGeM",
+    "SelaVPRBaseSALAD",
+    "SelaVPRLargeBoQ",
+    "SelaVPRLargeGeM",
+    "SelaVPRLargeSALAD",
 ]

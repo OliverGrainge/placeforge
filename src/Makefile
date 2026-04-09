@@ -20,12 +20,15 @@ datapipelines_train:
 datapipelines_train_ablation:
 	@source ../.venv/bin/activate && \
 	for pipeline in \
-		msls_cossim_0p00_train \
-		msls_cossim_0p20_train \
-		msls_cossim_0p40_train \
-		sf_xl_small_cossim_0p00_train \
-		sf_xl_small_cossim_0p20_train \
-		sf_xl_small_cossim_0p40_train \
+		gsvcities_train_cos02 \
+		gsvcities_train_cos03 \
+		gsvcities_train_cos04 \
+		msls_train_cos02 \
+		msls_train_cos03 \
+		msls_train_cos04 \
+		sf_xl_train_cos02 \
+		sf_xl_train_cos03 \
+		sf_xl_train_cos04 \
 	; do \
 		echo "--- $$pipeline ---" && python -m cli datapipeline $$pipeline; \
 	done

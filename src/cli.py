@@ -425,6 +425,16 @@ def _print_test_results(results: list[Mapping[str, float]]) -> None:
             table.add_row(
                 [dataset, *(recalls.get(metric, "-") for metric in recall_metrics)]
             )
+        # Average row
+        avg_row = ["Average"]
+        for metric in recall_metrics:
+            values = [
+                float(recalls[metric])
+                for recalls in datasets.values()
+                if metric in recalls and recalls[metric] != "-"
+            ]
+            avg_row.append(f"{sum(values) / len(values):.1f}" if values else "-")
+        table.add_row(avg_row)
     else:
         table.field_names = ["Metric", "Value"]
         table.align["Value"] = "r"

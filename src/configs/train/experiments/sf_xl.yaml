@@ -1,5 +1,5 @@
 logger:
-  name: resnet18_gsvcities
+  name: resnet18_sf_xl
 
 trainer:
   max_steps: 2000
@@ -32,7 +32,7 @@ module:
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: gsvcities_train
+  train_dataset_name: sf_xl_train
   fraction: 1.0
   val_dataset_names:
     - pitts30k_val
@@ -42,7 +42,7 @@ datamodule:
     - tokyo247_test
     - nordland_test
     - svox_test
-  batch_size: 64
+  batch_size: 128
   images_per_place: 4
   num_workers: 16
   transform:

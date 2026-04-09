@@ -77,46 +77,48 @@ def _assign_place_ids(
     return df
 
 
-def _merge_image_embeddings(
-    df: pd.DataFrame,
-    all_image_embs: dict[str, np.ndarray],
-    all_image_indices: dict[str, pd.Series],
-) -> tuple[np.ndarray, pd.Series]:
-    """Build a unified embedding matrix and index from per-source caches.
+class _EmbeddingLookup:
+    """Pre-resolved embedding lookup for fast per-place access.
 
-    Returns an (N, D) array and a Series mapping image_id → row in that array,
-    covering all images in *df*.
+    Resolves all image_path → (source_mmap, row) mappings once at init,
+    then the hot loop uses only numpy integer indexing.
     """
-    emb_parts = []
-    index_ids = []
-    row_offset = 0
 
-    for source, source_df in df.groupby("source"):
-        embs = all_image_embs[source]
-        idx = all_image_indices[source]
-        source_rows = idx.loc[source_df["image_path"].values].values
-        emb_parts.append(embs[source_rows])
-        source_image_ids = source_df["image_id"].values
-        index_ids.extend(source_image_ids)
-        row_offset += len(source_image_ids)
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        all_image_embs: dict[str, np.ndarray],
+        all_image_indices: dict[str, pd.Series],
+    ) -> None:
+        source_list = sorted(all_image_embs.keys())
+        source_to_idx = {s: i for i, s in enumerate(source_list)}
+        self._emb_arrays = [all_image_embs[s] for s in source_list]
 
-    merged_embs = np.concatenate(emb_parts, axis=0)
-    merged_index = pd.Series(
-        data=np.arange(len(index_ids)),
-        index=pd.Index(index_ids, name="id"),
-        name="row",
-    )
-    return merged_embs, merged_index
+        # Pre-resolve: for each df row, store which source array and which
+        # row in that array.  Done once with vectorised pandas lookups.
+        self._src_idx = np.array(
+            [source_to_idx[s] for s in df["source"].values], dtype=np.int32,
+        )
+        self._emb_row = np.empty(len(df), dtype=np.int64)
+        for source in source_list:
+            mask = df["source"].values == source
+            paths = df.loc[mask, "image_path"].values
+            self._emb_row[mask] = all_image_indices[source].loc[paths].values
 
+    def get(self, df_indices: np.ndarray) -> np.ndarray:
+        """Return (N, D) float32 embeddings for the given df row indices."""
+        src_indices = self._src_idx[df_indices]
+        emb_rows = self._emb_row[df_indices]
 
-def _build_groups(
-    df: pd.DataFrame, image_index: pd.Series
-) -> list[tuple[list[int], np.ndarray]]:
-    """Group DataFrame rows by ``place_id`` and resolve their embedding rows."""
-    return [
-        (sub.index.tolist(), image_index.loc[sub["image_id"].values].values)
-        for _, sub in df.groupby("place_id")
-    ]
+        unique_sources = np.unique(src_indices)
+        if len(unique_sources) == 1:
+            return self._emb_arrays[unique_sources[0]][emb_rows].astype(np.float32)
+
+        parts = []
+        for si in unique_sources:
+            mask = src_indices == si
+            parts.append(self._emb_arrays[si][emb_rows[mask]].astype(np.float32))
+        return np.concatenate(parts, axis=0)
 
 
 def _apply_keep_mask(df: pd.DataFrame, keep_mask: np.ndarray) -> pd.DataFrame:
@@ -201,6 +203,19 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
 
         needs_assignment = df["place_id"].isna()
 
+        # --- Re-factorise pre-existing place_ids to be globally unique ----
+        # When combining multiple sources (e.g. GSV-Cities + Pitts30k), each
+        # source may have its own zero-based place_id numbering.  We use
+        # (source, original_place_id) tuples to make them collision-free.
+        has_existing = ~needs_assignment
+        if has_existing.any():
+            existing_keys = pd.Series(list(zip(
+                df.loc[has_existing, "source"].values,
+                df.loc[has_existing, "place_id"].values,
+            )))
+            new_ids, _ = pd.factorize(existing_keys, sort=True)
+            df.loc[has_existing, "place_id"] = new_ids.astype(np.int64)
+
         # --- Assign new place IDs to rows that lack one -------------------
         if needs_assignment.any():
             unassigned = df.loc[needs_assignment]
@@ -217,7 +232,7 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
             )
 
             # Offset new IDs so they don't collide with existing ones
-            existing_ids = df.loc[~needs_assignment, "place_id"]
+            existing_ids = df.loc[has_existing, "place_id"]
             if len(existing_ids) > 0:
                 offset = int(existing_ids.max()) + 1
             else:
@@ -260,7 +275,7 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
                 ).apply(floor)
 
         # --- Embedding-based coherence filtering (all places) ---------------
-        # Load per-source image embedding caches and build a unified index
+        # Load per-source image embedding caches (memory-mapped).
         sources = df["source"].unique()
         all_image_embs = {}
         all_image_indices = {}
@@ -269,27 +284,32 @@ class AssignCuraVPRPlaceIdStep(BaseStep):
             all_image_embs[source] = cache.mmap()
             all_image_indices[source] = cache.load_index().set_index("id")["row"]
 
-        image_embs, image_index = _merge_image_embeddings(
-            df, all_image_embs, all_image_indices,
-        )
+        # Pre-resolve all image paths → embedding rows (vectorised, once).
+        lookup = _EmbeddingLookup(df, all_image_embs, all_image_indices)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        groups = _build_groups(df, image_index)
+
+        # Build groups as numpy arrays to avoid pandas in the hot loop.
+        place_ids = df["place_id"].values
+        order = np.argsort(place_ids, kind="mergesort")
+        sorted_pids = place_ids[order]
+        split_points = np.flatnonzero(np.diff(sorted_pids)) + 1
+        groups = np.split(order, split_points)
 
         if self.pbar is not None:
             self.pbar.reset(total=len(groups))
 
         keep_mask = np.ones(len(df), dtype=bool)
 
-        for df_indices, image_rows in groups:
-            dropped = self._filter_place(image_embs[image_rows], device)
-            n_surviving = len(image_rows) - len(dropped)
+        for group_indices in groups:
+            place_embs = lookup.get(group_indices)
+            dropped = self._filter_place(place_embs, device)
+            n_surviving = len(group_indices) - len(dropped)
 
             if n_surviving < self.min_images:
-                for idx in df_indices:
-                    keep_mask[idx] = False
+                keep_mask[group_indices] = False
             else:
                 for local_idx in dropped:
-                    keep_mask[df_indices[local_idx]] = False
+                    keep_mask[group_indices[local_idx]] = False
 
             if self.pbar is not None:
                 self.pbar.update(1)

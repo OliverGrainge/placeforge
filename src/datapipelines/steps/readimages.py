@@ -382,13 +382,13 @@ class ReadPitts30kImagesStep(BaseStep):
             self.pbar.reset(total=len(paths))
 
         records: list[dict[str, Any]] = []
+        place_bins: list[tuple[int, int, int]] = []
         for image_id, image_path in enumerate(paths):
             meta = self._parse_pitts_filename(image_path.name)
-            place_id = self._build_place_id(
-                utm_east=meta["utm_east"],
-                utm_north=meta["utm_north"],
-                heading_deg=meta["heading"],
-            )
+            place_bins.append(self._place_bin(
+                meta["utm_east"], meta["utm_north"], meta["heading"],
+                self.cell_size_m, self.angle_bin_deg,
+            ))
 
             records.append({
                 "image_id": image_id,
@@ -400,7 +400,6 @@ class ReadPitts30kImagesStep(BaseStep):
                 "yaw_index": meta["yaw_index"],
                 "tile_num": meta["tile_num"],
                 "pano_id": meta["pano_id"],
-                "place_id": place_id,
                 "source": self.source,
             })
 
@@ -408,6 +407,7 @@ class ReadPitts30kImagesStep(BaseStep):
                 self.pbar.update(1)
 
         df = pd.DataFrame(records)
+        df["place_id"] = pd.factorize(place_bins, sort=True)[0]
         _validate_heading(df, self.source)
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_parquet(self.cache_path, index=False)
@@ -455,21 +455,19 @@ class ReadPitts30kImagesStep(BaseStep):
             "heading": heading_deg,
         }
 
-    def _build_place_id(
-        self,
+    @staticmethod
+    def _place_bin(
         utm_east: float,
         utm_north: float,
         heading_deg: float,
-    ) -> str:
-        # Spatial binning in UTM, following the paper's category construction idea.
-        east_bin = math.floor(utm_east / self.cell_size_m)
-        north_bin = math.floor(utm_north / self.cell_size_m)
-
-        # Orientation binning. For Pitts30k the paper uses alpha=60°.
-        # With 12 yaw views at 30° steps, this groups adjacent directions in pairs.
-        heading_bin = math.floor((heading_deg % 360.0) / self.angle_bin_deg)
-
-        return f"{east_bin}_{north_bin}_{heading_bin}"
+        cell_size_m: float,
+        angle_bin_deg: float,
+    ) -> tuple[int, int, int]:
+        """Return the (east_bin, north_bin, heading_bin) grid key."""
+        east_bin = math.floor(utm_east / cell_size_m)
+        north_bin = math.floor(utm_north / cell_size_m)
+        heading_bin = math.floor((heading_deg % 360.0) / angle_bin_deg)
+        return (east_bin, north_bin, heading_bin)
 
 
 

@@ -188,18 +188,36 @@ class AggregatePlaceEmbeddingStep(BaseStep):
     def run(self, context: dict[str, Any]) -> dict[str, Any]:
         df = context["traindataset"]
 
-        sources = df["source"].unique()
-        image_caches = {s: self._image_cache(s) for s in sources}
-        image_embs = {s: c.mmap() for s, c in image_caches.items()}
-        image_indices = {
-            s: c.load_index().set_index("id")["row"]
-            for s, c in image_caches.items()
-        }
+        # Load per-source embedding caches (memory-mapped)
+        sources = sorted(df["source"].unique())
+        source_to_idx = {s: i for i, s in enumerate(sources)}
+        emb_arrays = []
+        for source in sources:
+            cache = self._image_cache(source)
+            emb_arrays.append(cache.mmap())
 
-        grouped = list(df.groupby("place_id", sort=True))
-        n_places = len(grouped)
-        emb_dim = next(iter(image_embs.values())).shape[1]
+        emb_dim = emb_arrays[0].shape[1]
 
+        # Pre-resolve all image paths → (source_index, embedding_row)
+        src_idx = np.array(
+            [source_to_idx[s] for s in df["source"].values], dtype=np.int32,
+        )
+        emb_row = np.empty(len(df), dtype=np.int64)
+        for source in sources:
+            cache = self._image_cache(source)
+            idx = cache.load_index().set_index("id")["row"]
+            mask = df["source"].values == source
+            emb_row[mask] = idx.loc[df.loc[mask, "image_path"].values].values
+
+        # Build groups with numpy (no pandas in hot loop)
+        place_ids = df["place_id"].values
+        order = np.argsort(place_ids, kind="mergesort")
+        sorted_pids = place_ids[order]
+        split_points = np.flatnonzero(np.diff(sorted_pids)) + 1
+        groups = np.split(order, split_points)
+        unique_place_ids = sorted_pids[np.r_[0, split_points]]
+
+        n_places = len(groups)
         self.place_cache.cache_dir.mkdir(parents=True, exist_ok=True)
         mmap = np.lib.format.open_memmap(
             self.place_cache.npy_path,
@@ -211,15 +229,19 @@ class AggregatePlaceEmbeddingStep(BaseStep):
         if self.pbar is not None:
             self.pbar.reset(total=n_places)
 
-        index_ids = []
-        for row, (actual_place_id, sub) in enumerate(grouped):
-            parts = []
-            for source, source_sub in sub.groupby("source"):
-                idx = image_indices[source]
-                emb = image_embs[source]
-                rows = idx.loc[source_sub["image_path"].values].values
-                parts.append(emb[rows].astype(np.float32))
-            embs = np.concatenate(parts, axis=0)
+        for row, group_indices in enumerate(groups):
+            g_src = src_idx[group_indices]
+            g_rows = emb_row[group_indices]
+
+            unique_sources = np.unique(g_src)
+            if len(unique_sources) == 1:
+                embs = emb_arrays[unique_sources[0]][g_rows].astype(np.float32)
+            else:
+                parts = []
+                for si in unique_sources:
+                    mask = g_src == si
+                    parts.append(emb_arrays[si][g_rows[mask]].astype(np.float32))
+                embs = np.concatenate(parts, axis=0)
 
             if self.reduction == "mean":
                 agg = embs.mean(axis=0)
@@ -232,7 +254,6 @@ class AggregatePlaceEmbeddingStep(BaseStep):
                     agg = agg / norm
 
             mmap[row] = agg
-            index_ids.append(actual_place_id)
 
             if self.pbar is not None:
                 self.pbar.update(1)
@@ -240,8 +261,9 @@ class AggregatePlaceEmbeddingStep(BaseStep):
         mmap.flush()
         del mmap
 
-        pd.DataFrame({"id": index_ids, "row": np.arange(n_places)}).to_parquet(
-            self.place_cache.index_path, index=False
-        )
+        pd.DataFrame({
+            "id": unique_place_ids,
+            "row": np.arange(n_places),
+        }).to_parquet(self.place_cache.index_path, index=False)
 
         return context

@@ -106,6 +106,7 @@ class PlaceRecognitionModule(pl.LightningModule):
         test_datasets = datamodule._test_datasets
         test_names = datamodule.test_dataset_names
 
+        test_metrics: dict[str, float] = {}
         for dl_idx in sorted(self._test_store.keys()):
             all_embs = self._test_store[dl_idx]
             dataset = test_datasets[dl_idx]
@@ -119,8 +120,9 @@ class PlaceRecognitionModule(pl.LightningModule):
 
             name = test_names[dl_idx] if dl_idx < len(test_names) else str(dl_idx)
             for k, recall in recalls.items():
-                self.log(f"test/{name}/R@{k}", recall, prog_bar=(k == 1), add_dataloader_idx=False)
+                test_metrics[f"test/{name}/R@{k}"] = recall
 
+        self.log_dict(test_metrics, add_dataloader_idx=False)
         self._test_store.clear()
 
     # ------------------------------------------------------------------

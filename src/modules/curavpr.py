@@ -9,7 +9,14 @@ from torch import Tensor
 from .base import PlaceRecognitionModule
 from .models.dinov2 import DinoV2GeM, DinoV2SALAD, DinoV2BoQ
 from .models.resnet import ResNet18GeM
-from .models.selavpr import SelaVPR
+from .models.selavpr import (
+    SelaVPRBaseBoQ,
+    SelaVPRBaseGeM,
+    SelaVPRBaseSALAD,
+    SelaVPRLargeBoQ,
+    SelaVPRLargeGeM,
+    SelaVPRLargeSALAD,
+)
 from pytorch_metric_learning import losses, miners
 
 _MODELS: dict[str, type] = {
@@ -17,7 +24,12 @@ _MODELS: dict[str, type] = {
     "dinov2_salad": DinoV2SALAD,
     "dinov2_boq": DinoV2BoQ,
     "resnet18_gem": ResNet18GeM,
-    "selavpr": SelaVPR,
+    "selavpr_base_boq": SelaVPRBaseBoQ,
+    "selavpr_large_boq": SelaVPRLargeBoQ,
+    "selavpr_base_gem": SelaVPRBaseGeM,
+    "selavpr_large_gem": SelaVPRLargeGeM,
+    "selavpr_base_salad": SelaVPRBaseSALAD,
+    "selavpr_large_salad": SelaVPRLargeSALAD,
 }
 
 # Baseline models are registered lazily to avoid heavy torch.hub imports
@@ -115,19 +127,22 @@ class CuraVPRLightningModule(PlaceRecognitionModule):
         return loss
 
     def configure_optimizers(self):
-        # Detect the backbone sub-module for differential learning rates.
-        # DINOv2 models use "dino"; ResNet models use "backbone".
-        backbone_module = getattr(self.model, "dino", None) or getattr(self.model, "backbone", None)
-        if backbone_module is not None:
-            backbone_params = list(backbone_module.parameters())
-            backbone_ids = {id(p) for p in backbone_params}
-            head_params = [p for p in self.parameters() if id(p) not in backbone_ids]
-            param_groups = [
-                {"params": backbone_params, "lr": self.learning_rate * self.backbone_lr_scale},
-                {"params": head_params, "lr": self.learning_rate},
-            ]
+        if hasattr(self.model, "trainable_parameters") and hasattr(self.model, "setup_for_training"):
+            param_groups = [{"params": list(self.model.trainable_parameters()), "lr": self.learning_rate}]
         else:
-            param_groups = [{"params": list(self.parameters()), "lr": self.learning_rate}]
+            # Detect the backbone sub-module for differential learning rates.
+            # DINOv2 models use "dino"; ResNet models use "backbone".
+            backbone_module = getattr(self.model, "dino", None) or getattr(self.model, "backbone", None)
+            if backbone_module is not None:
+                backbone_params = list(backbone_module.parameters())
+                backbone_ids = {id(p) for p in backbone_params}
+                head_params = [p for p in self.parameters() if id(p) not in backbone_ids]
+                param_groups = [
+                    {"params": backbone_params, "lr": self.learning_rate * self.backbone_lr_scale},
+                    {"params": head_params, "lr": self.learning_rate},
+                ]
+            else:
+                param_groups = [{"params": list(self.parameters()), "lr": self.learning_rate}]
 
         optimizer = torch.optim.AdamW(
             param_groups,
