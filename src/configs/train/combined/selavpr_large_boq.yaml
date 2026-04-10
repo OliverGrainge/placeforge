@@ -36,7 +36,7 @@ module:
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: gsvcities_sf_xl_pitts30k_train
+  train_dataset_name: gsvcities_sf_xl_pitts30k_msls_train
   fraction: 1.0
   val_dataset_names:
     - pitts30k_test

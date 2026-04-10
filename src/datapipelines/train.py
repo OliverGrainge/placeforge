@@ -15,6 +15,7 @@ from datapipelines.steps import (
     ReadPitts30kImagesStep,
     ReadSFXLImagesStep,
     SaveTrainDataset,
+    SubsamplePlacesStep,
     SummaryTrainDataset,
     AnalyseSuperGroupStep,
 )
@@ -65,19 +66,20 @@ def build_sf_xl_train() -> Pipeline:
 
 
 # -----------------------------------------------------------------------------
-# Combined: GSV-Cities + SF-XL + Pittsburgh 30k
+# Combined: GSV-Cities + SF-XL + Pittsburgh 30k + MSLS
 # -----------------------------------------------------------------------------
 
-@register_pipeline("gsvcities_sf_xl_pitts30k_train", category="train")
-def build_gsvcities_sf_xl_pitts30k_train() -> Pipeline:
-    name = "gsvcities_sf_xl_pitts30k_train"
+@register_pipeline("gsvcities_sf_xl_pitts30k_msls_train", category="train")
+def build_gsvcities_sf_xl_pitts30k_msls_train() -> Pipeline:
+    name = "gsvcities_sf_xl_pitts30k_msls_train"
     return Pipeline(
         name,
         steps=[
-            # --- Read all three sources ---
+            # --- Read all four sources ---
             ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
             ReadPitts30kImagesStep(data_root=raw_dir() / PITTS30K_PATH / "images" / "train"),
+            ReadMSLSImagesStep(data_root=raw_dir() / MSLS_PATH / "train"),
             # --- Compute embeddings per source ---
             ComputeImageEmbeddingStep(
                 source="gsvcities", batch_size=128, num_workers=8
@@ -88,6 +90,9 @@ def build_gsvcities_sf_xl_pitts30k_train() -> Pipeline:
             ComputeImageEmbeddingStep(
                 source="pitts30k", batch_size=128, num_workers=8
             ),
+            ComputeImageEmbeddingStep(
+                source="msls", batch_size=128, num_workers=8
+            ),
             # --- Place-ID assignment + coherence filtering ---
             AssignCuraVPRPlaceIdStep(
                 cell_size_meters=12.5,
@@ -96,6 +101,10 @@ def build_gsvcities_sf_xl_pitts30k_train() -> Pipeline:
                 min_images=4,
                 use_heading=True,
             ),
+            # --- Subsample non-GSV sources to balance the mix ---
+            SubsamplePlacesStep(source="sf_xl", fraction=0.5),
+            #SubsamplePlacesStep(source="pitts30k", fraction=0.5),
+            SubsamplePlacesStep(source="msls", fraction=0.5),
             # --- Aggregate + supergroup ---
             AggregatePlaceEmbeddingStep(
                 place_embedding_name=name,
