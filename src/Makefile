@@ -20,15 +20,13 @@ datapipelines_train:
 datapipelines_train_ablation:
 	@source ../.venv/bin/activate && \
 	for pipeline in \
-		gsvcities_train_cos02 \
-		gsvcities_train_cos03 \
-		gsvcities_train_cos04 \
-		msls_train_cos02 \
-		msls_train_cos03 \
-		msls_train_cos04 \
-		sf_xl_train_cos02 \
-		sf_xl_train_cos03 \
-		sf_xl_train_cos04 \
+		sf_xl_abl_raw_gps \
+		sf_xl_abl_sg_only \
+		sf_xl_abl_filter_only \
+		sf_xl_abl_tau02 \
+		sf_xl_abl_tau04 \
+		sf_xl_abl_sg512 \
+		sf_xl_abl_sg2048 \
 	; do \
 		echo "--- $$pipeline ---" && python -m cli datapipeline $$pipeline; \
 	done

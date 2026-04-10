@@ -56,6 +56,7 @@ def list_pipelines(category: PipelineCategory | None = None) -> tuple[str, ...]:
 from . import train
 from . import val
 from . import test
+from . import ablations
 
 
 __all__ = ["Pipeline", "get_pipeline", "list_pipelines", "register_pipeline"]

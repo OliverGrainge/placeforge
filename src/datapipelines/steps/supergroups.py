@@ -24,6 +24,24 @@ def _spherical_kmeans(X: np.ndarray, k: int, max_iter: int, seed: int) -> np.nda
     return labels.ravel().astype(np.int64)
 
 
+class AssignUniformSuperGroupStep(BaseStep):
+    """Assign all places to a single supergroup (supergroup_id=0).
+
+    Used as an ablation baseline to isolate the effect of supergroup
+    construction from other pipeline components.
+    """
+
+    show_pbar = False
+
+    def cache_params(self) -> dict[str, Any]:
+        return {"version": 1}
+
+    def run(self, context: dict[str, Any]) -> dict[str, Any]:
+        df = context["traindataset"].copy()
+        df["supergroup_id"] = np.int64(0)
+        return {**context, "traindataset": df}
+
+
 class AssignCuraVPRSuperGroupStep(BaseStep):
     """Two-level supergroup assignment using place embeddings.
 

@@ -1,8 +1,8 @@
 logger:
-  name: combined_selavpr_large_boq
+  name: abl_sg2048
 
 trainer:
-  max_steps: 30000
+  max_steps: 4000
   max_epochs: -1
   accelerator: gpu
   devices: 1
@@ -15,48 +15,36 @@ trainer:
 compile: false
 
 module:
-  model_name: selavpr_large_boq
-  #model_kwargs:
-  #  freeze_up_to: layer2   # example: only train layer4 + head
-  #  descriptor_dim: 1024
-
+  model_name: selavpr_base_boq
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   warmup_steps: 50
   backbone_lr_scale: 0.5
   lr_schedule: staged
   lr_stages:
-    - until: 20000
+    - until: 10000
       scale: 1.0
-    - until: 5000
-      scale: 0.35
-    - until: 5000
-      scale: 0.1
   val_recall_ks: [1, 5, 10]
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: gsvcities_sf_xl_pitts30k_train
+  train_dataset_name: sf_xl_abl_sg2048
   fraction: 1.0
   val_dataset_names:
-    - pitts30k_test
-    - msls_val
+    - pitts30k_val
   test_dataset_names:
     - pitts30k_test
-    - msls_val
-    - tokyo247_test
     - nordland_test
-    - svox_test
-  batch_size: 128
+  batch_size: 120
   images_per_place: 4
   num_workers: 16
   transform:
     name: train
     image_size: 224
-    augmentation: heavy
+    augmentation: light
   val_transform:
     name: eval
-    image_size: 322
+    image_size: 224
   test_transform:
     name: eval
-    image_size: 322
+    image_size: 224

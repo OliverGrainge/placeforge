@@ -129,7 +129,7 @@ def build_eynsham_pipeline() -> Pipeline:
         steps=[
             ReadTestImagesStep(
                 query_path=raw_dir() / EYNSHAM_PATH / "images" / "test" / "queries",
-                database_path=raw_dir() / EYNSHAM_PATH / "images" / "test" / "gallery",
+                database_path=raw_dir() / EYNSHAM_PATH / "images" / "test" / "database",
             ),
             ComputeTestMatchesStep(radius_meters=25),
             SaveTestDataset(name=PIPELINE_NAME),

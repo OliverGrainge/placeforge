@@ -1,8 +1,8 @@
 logger:
-  name: combined_selavpr_large_boq
+  name: sf_xl_selavpr_base_salad
 
 trainer:
-  max_steps: 30000
+  max_steps: 20000
   max_epochs: -1
   accelerator: gpu
   devices: 1
@@ -15,18 +15,15 @@ trainer:
 compile: false
 
 module:
-  model_name: selavpr_large_boq
-  #model_kwargs:
-  #  freeze_up_to: layer2   # example: only train layer4 + head
-  #  descriptor_dim: 1024
+  model_name: dinov2_salad
 
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   warmup_steps: 50
-  backbone_lr_scale: 0.5
+  backbone_lr_scale: 0.2
   lr_schedule: staged
   lr_stages:
-    - until: 20000
+    - until: 10000
       scale: 1.0
     - until: 5000
       scale: 0.35

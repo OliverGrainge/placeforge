@@ -7,9 +7,10 @@ import torch
 from torch import Tensor
 
 from .base import PlaceRecognitionModule
-from .models.dinov2 import DinoV2GeM, DinoV2SALAD, DinoV2BoQ
-from .models.resnet import ResNet18GeM
-from .models.selavpr import (
+from .models.archs import (
+    DinoV2BoQ,
+    DinoV2GeM,
+    DinoV2SALAD,
     SelaVPRBaseBoQ,
     SelaVPRBaseGeM,
     SelaVPRBaseSALAD,
@@ -23,7 +24,6 @@ _MODELS: dict[str, type] = {
     "dinov2_gem": DinoV2GeM,
     "dinov2_salad": DinoV2SALAD,
     "dinov2_boq": DinoV2BoQ,
-    "resnet18_gem": ResNet18GeM,
     "selavpr_base_boq": SelaVPRBaseBoQ,
     "selavpr_large_boq": SelaVPRLargeBoQ,
     "selavpr_base_gem": SelaVPRBaseGeM,

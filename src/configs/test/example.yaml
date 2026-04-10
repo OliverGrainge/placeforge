@@ -6,9 +6,9 @@
 # selavpr_base_boq | selavpr_large_boq | selavpr_base_gem | selavpr_large_gem
 # selavpr_base_salad | selavpr_large_salad
 # megaloc | boq | salad | eigenplaces | mixvpr | supervlad | sage
-checkpoint: /home/oliver/github/placeforge/checkpoints/train/sf_xl_salad/best.ckpt
+checkpoint: /home/oliver/github/placeforge/checkpoints/baselines/mutualvpr_boq/best_model.pth
 data_config: test_config.yaml
-architecture: dinov2_salad
+architecture: dinov2_boq
 image_size: 224
 
 trainer:
