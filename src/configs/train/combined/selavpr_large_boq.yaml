@@ -1,8 +1,8 @@
 logger:
-  name: combined_clique_selavpr_large_boq
+  name: combined_selavpr_large_boq
 
 trainer:
-  max_steps: 20000
+  max_steps: 30000
   max_epochs: -1
   accelerator: gpu
   devices: 1
@@ -22,21 +22,21 @@ module:
 
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_steps: 100
+  warmup_steps: 50
   backbone_lr_scale: 0.5
   lr_schedule: staged
   lr_stages:
-    - until: 10000
+    - until: 20000
       scale: 1.0
     - until: 5000
       scale: 0.35
     - until: 5000
       scale: 0.1
-  val_recall_ks: [1, 5]
+  val_recall_ks: [1, 5, 10]
   miner_epsilon: 0.1
 
 datamodule:
-  train_dataset_name: gsvcities_sf_xl_pitts30k_clique_train
+  train_dataset_name: gsvcities_sf_xl_pitts30k_train
   fraction: 1.0
   val_dataset_names:
     - pitts30k_test

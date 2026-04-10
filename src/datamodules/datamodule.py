@@ -31,7 +31,7 @@ class BaseDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        val_dataset_names: List[str],
+        val_dataset_names: List[str] | None,
         batch_size: int,
         num_workers: int = os.cpu_count() // 2,
         val_transform: Any = None,
@@ -39,7 +39,7 @@ class BaseDataModule(pl.LightningDataModule):
         test_transform: Any = None,
     ):
         super().__init__()
-        self.val_dataset_names = val_dataset_names
+        self.val_dataset_names = val_dataset_names or []
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.val_transform = val_transform

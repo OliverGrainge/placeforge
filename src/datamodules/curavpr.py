@@ -13,9 +13,9 @@ from .datasets import ContrastiveTrainDataset, subsample_geographic
 class CuraVPRTrainDataModule(BaseDataModule):
     def __init__(
         self,
-        train_dataset_name: str,
-        val_dataset_names: List[str],
         batch_size: int,
+        train_dataset_name: str | None = None,
+        val_dataset_names: List[str] | None = None,
         num_workers: int = os.cpu_count() // 2,
         images_per_place: int = 4,
         fraction: float = 1.0,
@@ -62,6 +62,8 @@ class CuraVPRTrainDataModule(BaseDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         if stage in (None, "fit"):
+            if not self.train_dataset_name:
+                raise ValueError("train_dataset_name is required for fit setup")
             self._train_dataset = ContrastiveTrainDataset(
                 self.train_dataset_name,
                 images_per_place=self.images_per_place,

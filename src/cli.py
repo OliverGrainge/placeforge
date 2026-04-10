@@ -36,7 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=None,
-        help="Path to a YAML config file (inferred from checkpoint dir if not given)",
+        help="Path to a model/eval YAML config file (inferred from checkpoint dir if not given)",
+    )
+    test_parser.add_argument(
+        "--data-config",
+        type=Path,
+        default=None,
+        help="Path to a YAML config describing test datasets, batch size, workers, and transforms",
     )
     test_parser.add_argument(
         "--best",
@@ -301,6 +307,7 @@ def _handle_test(args: argparse.Namespace) -> int:
 
     ckpt_file = None
     config_path = None
+    config: dict[str, Any] = {}
 
     if args.checkpoint is not None:
         # Explicit --checkpoint arg takes top priority
@@ -316,9 +323,10 @@ def _handle_test(args: argparse.Namespace) -> int:
         if not config_path.exists():
             print(f"Config not found: {config_path}")
             return 1
-        _pre_config = yaml.safe_load(config_path.read_text())
-        if "checkpoint" in _pre_config:
-            ckpt_file = Path(_pre_config["checkpoint"]).expanduser().resolve()
+        config = _load_yaml_config(config_path)
+        checkpoint_value = config.get("checkpoint")
+        if checkpoint_value is not None:
+            ckpt_file = _resolve_config_path(Path(checkpoint_value).expanduser(), config_path)
             use_robust_load = True
         else:
             # No checkpoint in config — check if there's one in the default dir
@@ -349,11 +357,20 @@ def _handle_test(args: argparse.Namespace) -> int:
             print("No config file found. Pass a YAML config as the path argument.")
         return 1
 
-    config = yaml.safe_load(config_path.read_text())
+    if not config:
+        config = _load_yaml_config(config_path)
 
     trainer_kwargs: dict[str, Any] = config.get("trainer", {})
-    module_kwargs: dict[str, Any] = config.get("module", {})
-    datamodule_kwargs = _parse_datamodule_kwargs(config)
+    test_data_config = _load_test_data_config(
+        model_config=config,
+        data_config_path=args.data_config,
+        model_config_path=config_path,
+    )
+    module_kwargs = _parse_test_module_kwargs(config, test_data_config)
+    datamodule_kwargs = _parse_test_datamodule_kwargs(
+        model_config=config,
+        data_config=test_data_config,
+    )
 
     trainer_kwargs.setdefault("default_root_dir", str(_LOGS_DIR))
     trainer_kwargs.pop("callbacks", None)
@@ -379,15 +396,17 @@ def _handle_test(args: argparse.Namespace) -> int:
         # Robust manual loading: load directly into the model, not the lightning module
         _load_checkpoint_into_model(module.model, ckpt_file)
         trainer = pl.Trainer(**trainer_kwargs)
-        _run_test_and_print_results(trainer, module, datamodule)
+        metrics = _run_test_and_print_results(trainer, module, datamodule)
+        _save_checkpoint_test_metrics(ckpt_file, metrics)
     else:
         print(f"Testing with checkpoint: {ckpt_file}")
         _orig_torch_load = torch.load
         torch.load = lambda *a, **kw: _orig_torch_load(*a, **{**kw, "weights_only": False})
         trainer = pl.Trainer(**trainer_kwargs)
-        _run_test_and_print_results(
+        metrics = _run_test_and_print_results(
             trainer, module, datamodule, ckpt_path=str(ckpt_file)
         )
+        _save_checkpoint_test_metrics(ckpt_file, metrics)
 
     return 0
 
@@ -397,13 +416,54 @@ def _run_test_and_print_results(
     module: Any,
     datamodule: Any,
     ckpt_path: str | None = None,
-) -> None:
+) -> dict[str, float]:
     test_kwargs: dict[str, Any] = {"datamodule": datamodule, "verbose": False}
     if ckpt_path is not None:
         test_kwargs["ckpt_path"] = ckpt_path
 
     results = trainer.test(module, **test_kwargs)
+    metrics = _unique_test_metrics(results)
     _print_test_results(results)
+    return metrics
+
+
+def _save_checkpoint_test_metrics(
+    ckpt_path: Path,
+    metrics: Mapping[str, float],
+) -> Path | None:
+    recall_metrics = {
+        name: float(value) for name, value in metrics.items() if _is_recall_metric(name)
+    }
+    if not recall_metrics:
+        return None
+
+    output_path = ckpt_path.with_suffix(".test_metrics.yaml")
+    grouped_metrics: dict[str, dict[str, float]] = {}
+    average_metrics: dict[str, float] = {}
+
+    datasets, recall_names = _group_recall_metrics_by_dataset(recall_metrics)
+    for dataset, recalls in datasets.items():
+        grouped_metrics[dataset] = {recall: float(value) for recall, value in recalls.items()}
+
+    for recall_name in recall_names:
+        values = [
+            recalls[recall_name]
+            for recalls in datasets.values()
+            if recall_name in recalls
+        ]
+        if values:
+            average_metrics[recall_name] = sum(values) / len(values)
+
+    output = {
+        "checkpoint": str(ckpt_path),
+        "metrics": grouped_metrics,
+    }
+    if average_metrics:
+        output["average"] = average_metrics
+
+    output_path.write_text(yaml.safe_dump(output, sort_keys=False))
+    print(f"Saved test metrics to {output_path}")
+    return output_path
 
 
 def _print_test_results(results: list[Mapping[str, float]]) -> None:
@@ -467,12 +527,26 @@ def _is_recall_metric(name: str) -> bool:
 def _group_recall_test_metrics(
     metrics: Mapping[str, float],
 ) -> tuple[dict[str, dict[str, str]], list[str]]:
+    datasets, recall_metrics = _group_recall_metrics_by_dataset(metrics)
+    formatted = {
+        dataset: {
+            recall: _format_test_metric_value(f"test/{dataset}/{recall}", value)
+            for recall, value in recalls.items()
+        }
+        for dataset, recalls in datasets.items()
+    }
+    return formatted, recall_metrics
+
+
+def _group_recall_metrics_by_dataset(
+    metrics: Mapping[str, float],
+) -> tuple[dict[str, dict[str, float]], list[str]]:
     datasets: dict[str, dict[str, str]] = {}
     recall_metrics: list[str] = []
 
     for name, value in metrics.items():
         dataset, recall = _split_test_recall_metric_name(name)
-        datasets.setdefault(dataset, {})[recall] = _format_test_metric_value(name, value)
+        datasets.setdefault(dataset, {})[recall] = float(value)
         if recall not in recall_metrics:
             recall_metrics.append(recall)
 
@@ -585,7 +659,10 @@ def _parse_datamodule_kwargs(config: dict[str, Any]) -> dict[str, Any]:
 
     _TRANSFORMS = {"train": TrainTransform, "eval": EvalTransform}
 
-    datamodule_kwargs: dict[str, Any] = config.get("datamodule", {})
+    if "datamodule" in config:
+        datamodule_kwargs: dict[str, Any] = dict(config["datamodule"])
+    else:
+        datamodule_kwargs = dict(config)
 
     for config_key, kwarg_key in [
         ("transform", "train_transform"),
@@ -599,6 +676,106 @@ def _parse_datamodule_kwargs(config: dict[str, Any]) -> dict[str, Any]:
             datamodule_kwargs[kwarg_key] = transform_cls(**transform_kwargs)
 
     return datamodule_kwargs
+
+
+def _load_yaml_config(path: Path) -> dict[str, Any]:
+    loaded = yaml.safe_load(path.read_text())
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise TypeError(f"{path} must contain a YAML mapping at the top level")
+    return loaded
+
+
+def _resolve_config_path(path: Path, config_path: Path) -> Path:
+    if path.is_absolute():
+        return path.resolve()
+    return (config_path.parent / path).resolve()
+
+
+def _parse_test_module_kwargs(
+    config: Mapping[str, Any],
+    data_config: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    module_kwargs = dict(config.get("module", {}))
+
+    if "architecture" in config and "model_name" not in module_kwargs:
+        module_kwargs["model_name"] = config["architecture"]
+    if "val_recall_ks" in config and "val_recall_ks" not in module_kwargs:
+        module_kwargs["val_recall_ks"] = config["val_recall_ks"]
+    if (
+        data_config is not None
+        and "val_recall_ks" in data_config
+        and "val_recall_ks" not in config.get("module", {})
+    ):
+        module_kwargs["val_recall_ks"] = data_config["val_recall_ks"]
+
+    return module_kwargs
+
+
+def _load_test_data_config(
+    *,
+    model_config: Mapping[str, Any],
+    data_config_path: Path | None,
+    model_config_path: Path,
+) -> dict[str, Any]:
+    resolved_data_config_path = _resolve_test_data_config_path(
+        model_config=model_config,
+        data_config_path=data_config_path,
+        model_config_path=model_config_path,
+    )
+
+    if resolved_data_config_path is not None:
+        return _load_yaml_config(resolved_data_config_path)
+
+    return {"datamodule": dict(model_config.get("datamodule", {}))}
+
+
+def _parse_test_datamodule_kwargs(
+    *,
+    model_config: Mapping[str, Any],
+    data_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    data_config = dict(data_config)
+
+    if "datamodule" in data_config:
+        datamodule_config = dict(data_config["datamodule"])
+        data_config = {**data_config, "datamodule": datamodule_config}
+    else:
+        datamodule_config = {
+            key: value
+            for key, value in data_config.items()
+            if key not in {"val_recall_ks", "architecture", "checkpoint", "data_config", "test_data_config", "trainer", "module", "image_size"}
+        }
+        data_config = datamodule_config
+
+    if "image_size" in model_config and "test_transform" not in datamodule_config:
+        datamodule_config["test_transform"] = {
+            "name": "eval",
+            "image_size": model_config["image_size"],
+        }
+
+    datamodule_kwargs = _parse_datamodule_kwargs(data_config)
+
+    datamodule_kwargs.setdefault("val_dataset_names", [])
+
+    return datamodule_kwargs
+
+
+def _resolve_test_data_config_path(
+    *,
+    model_config: Mapping[str, Any],
+    data_config_path: Path | None,
+    model_config_path: Path,
+) -> Path | None:
+    if data_config_path is not None:
+        return data_config_path.resolve()
+
+    configured_path = model_config.get("data_config") or model_config.get("test_data_config")
+    if configured_path is None:
+        return None
+
+    return _resolve_config_path(Path(configured_path).expanduser(), model_config_path)
 
 
 def _handle_datapipeline(args: argparse.Namespace) -> int:

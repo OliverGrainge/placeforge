@@ -8,4 +8,4 @@ PITTS30K_PATH = "pitts30k"
 SVOX_PATH = "svox"
 TOKYO247_PATH = "tokyo247"
 MSLS_PATH = "msls" 
-
+EYNSHAM_PATH = "eynsham"

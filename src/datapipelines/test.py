@@ -9,6 +9,7 @@ from datapipelines.paths import (
     SF_XL_PATH,
     SVOX_PATH,
     TOKYO247_PATH,
+    EYNSHAM_PATH,
 )
 from datapipelines.steps import (
     ComputeTestMatchesStep,
@@ -112,6 +113,23 @@ def build_svox_pipeline() -> Pipeline:
             ReadTestImagesStep(
                 query_path=raw_dir() / SVOX_PATH / "images" / "test" / "queries",
                 database_path=raw_dir() / SVOX_PATH / "images" / "test" / "gallery",
+            ),
+            ComputeTestMatchesStep(radius_meters=25),
+            SaveTestDataset(name=PIPELINE_NAME),
+            SummaryTestDataset(name=PIPELINE_NAME),
+        ],
+    )
+
+
+@register_pipeline("eynsham_test", category="test")
+def build_eynsham_pipeline() -> Pipeline:
+    PIPELINE_NAME = "eynsham_test"
+    return Pipeline(
+        PIPELINE_NAME,
+        steps=[
+            ReadTestImagesStep(
+                query_path=raw_dir() / EYNSHAM_PATH / "images" / "test" / "queries",
+                database_path=raw_dir() / EYNSHAM_PATH / "images" / "test" / "gallery",
             ),
             ComputeTestMatchesStep(radius_meters=25),
             SaveTestDataset(name=PIPELINE_NAME),

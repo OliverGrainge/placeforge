@@ -16,6 +16,7 @@ from datapipelines.steps import (
     ReadSFXLImagesStep,
     SaveTrainDataset,
     SummaryTrainDataset,
+    AnalyseSuperGroupStep,
 )
 
 # -----------------------------------------------------------------------------
@@ -198,7 +199,7 @@ def build_gsvcities_sf_xl_pitts30k_train() -> Pipeline:
     return Pipeline(
         name,
         steps=[
-            # --- Read all three sources (auto-merged via _merge_into_context) ---
+            # --- Read all three sources ---
             ReadGSVCitiesImagesStep(data_root=raw_dir() / GSVCITIES_PATH),
             ReadSFXLImagesStep(data_root=raw_dir() / SF_XL_PATH / "processed" / "train"),
             ReadPitts30kImagesStep(data_root=raw_dir() / PITTS30K_PATH / "images" / "train"),
@@ -214,7 +215,7 @@ def build_gsvcities_sf_xl_pitts30k_train() -> Pipeline:
             ),
             # --- Place-ID assignment + coherence filtering ---
             AssignCuraVPRPlaceIdStep(
-                cell_size_meters=10.0,
+                cell_size_meters=12.5,
                 heading_size_degrees=60.0,
                 cos_sim_threshold=0.3,
                 min_images=4,
@@ -229,7 +230,7 @@ def build_gsvcities_sf_xl_pitts30k_train() -> Pipeline:
             AssignCuraVPRSuperGroupStep(
                 place_embedding_name=name,
                 supergroup_size=1024,
-                N=5,
+                N=2,
                 L=2,
                 kmeans_max_iter=100,
                 seed=42,
@@ -237,6 +238,10 @@ def build_gsvcities_sf_xl_pitts30k_train() -> Pipeline:
             SaveTrainDataset(name=name),
             SummaryTrainDataset(name=name),
             AnalyseTrainDatasetStep(name=name),
+            AnalyseSuperGroupStep(
+                name=name,
+                place_embedding_name=name,
+            ),
         ],
     )
 

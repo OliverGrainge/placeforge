@@ -28,7 +28,7 @@ class TrainTransform:
             aug_ops = [
                 transforms.RandomResizedCrop(
                     (image_size, image_size),
-                    scale=(0.7, 1.0),
+                    scale=(0.9, 1.0),
                     interpolation=InterpolationMode.BILINEAR,
                 ),
             ]

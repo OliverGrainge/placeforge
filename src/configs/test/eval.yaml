@@ -1,29 +1,17 @@
-# Path to a standalone checkpoint (model weights, not a full Lightning ckpt).
-# Supports .ckpt, .pth, .pt files. Uses robust loading with automatic
-# prefix stripping/adding to match the model's keys.
-#checkpoint: /home/oliver/github/placeforge/checkpoints/train/sf_xl_salad/best.ckpt
+# Model/eval spec for `python -m cli test src/configs/test/eval.yaml`.
+# Keep model details here; put dataset and dataloader settings in `data_config`.
+# Supports .ckpt, .pth, .pt files. Standalone weight files use robust loading.
+# Available architectures:
+# dinov2_gem | dinov2_salad | dinov2_boq | resnet18_gem
+# selavpr_base_boq | selavpr_large_boq | selavpr_base_gem | selavpr_large_gem
+# selavpr_base_salad | selavpr_large_salad
+# megaloc | boq | salad | eigenplaces | mixvpr | supervlad | sage
+checkpoint: /home/oliver/github/placeforge/checkpoints/train/sf_xl_salad/best.ckpt
+data_config: test_config.yaml
+architecture: dinov2_salad
+image_size: 224
 
 trainer:
   accelerator: gpu
   devices: 1
   precision: 16-mixed
-
-module:
-  model_name: eigenplaces          # dinov2_gem | dinov2_salad | dinov2_boq | sage | boq | megaloc | supervlad | mixvpr | eigenplaces | salad |
-  val_recall_ks: [1, 5, 10]
-
-datamodule:
-  train_dataset_name: sf_xl_train
-  val_dataset_names: 
-    - pitts30k_val
-  test_dataset_names:
-    - pitts30k_test
-    - msls_val
-    - tokyo247_test 
-    - nordland_test
-    - svox_test
-  batch_size: 32
-  num_workers: 8
-  test_transform:
-    name: eval
-    image_size: 224
