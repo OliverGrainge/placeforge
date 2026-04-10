@@ -16,10 +16,6 @@ compile: false
 
 module:
   model_name: selavpr_base_boq
-  #model_kwargs:
-  #  freeze_up_to: layer2   # example: only train layer4 + head
-  #  descriptor_dim: 1024
-
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   warmup_steps: 50
@@ -28,16 +24,19 @@ module:
   lr_stages:
     - until: 20000
       scale: 1.0
-    - until: 5000
+    - until: 10000
       scale: 0.35
-    - until: 5000
-      scale: 0.1
   val_recall_ks: [1, 5, 10]
   miner_epsilon: 0.1
 
 datamodule:
   train_dataset_name: gsvcities_sf_xl_pitts30k_msls_train
   fraction: 1.0
+  source_sample_weights:
+    gsvcities: 2.0
+    sf_xl: 1.0
+    pitts30k: 4.0
+    msls: 1.0
   val_dataset_names:
     - pitts30k_test
     - msls_val
