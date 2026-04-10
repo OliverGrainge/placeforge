@@ -48,4 +48,4 @@ echo "Node: $SLURM_NODELIST"
 echo "Config: $CONFIG"
 echo "GPUs: $SLURM_GPUS_ON_NODE"
 
-python -m cli train "$CONFIG" --resume
+python -m cli train "$CONFIG"

@@ -43,8 +43,6 @@ class TrainTransform:
                     brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1,
                 ),
                 transforms.RandomGrayscale(p=0.1),
-                transforms.GaussianBlur(kernel_size=5, sigma=(0.1, 1.5)),
-                transforms.RandomErasing(p=0.15, scale=(0.02, 0.1)),
             ]
         else:
             raise ValueError(

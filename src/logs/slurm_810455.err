@@ -1,0 +1,85 @@
+Using 16bit Automatic Mixed Precision (AMP)
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/utilities/model_summary/model_summary.py:242: Precision 16-mixed is not supported by the model summary.  Estimated model size in MB will not be accurate. Using 32 bits instead.
+/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/core/saving.py:365: Skipping 'train_transform' parameter because it is not possible to safely dump to YAML.
+/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/core/saving.py:365: Skipping 'val_transform' parameter because it is not possible to safely dump to YAML.
+/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/core/saving.py:365: Skipping 'test_transform' parameter because it is not possible to safely dump to YAML.
+SLURM auto-requeueing enabled. Setting signal handlers.
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/iridisfs/home/oeg1n18/placeforge/src/cli.py", line 818, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/iridisfs/home/oeg1n18/placeforge/src/cli.py", line 92, in main
+    return args.handler(args)
+           ^^^^^^^^^^^^^^^^^^
+  File "/iridisfs/home/oeg1n18/placeforge/src/cli.py", line 185, in _handle_train
+    trainer.fit(module, datamodule=datamodule, ckpt_path=ckpt_path)
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 584, in fit
+    call._call_and_handle_interrupt(
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/trainer/call.py", line 49, in _call_and_handle_interrupt
+    return trainer_fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 630, in _fit_impl
+    self._run(model, ckpt_path=ckpt_path, weights_only=weights_only)
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 1079, in _run
+    results = self._run_stage()
+              ^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/trainer/trainer.py", line 1123, in _run_stage
+    self.fit_loop.run()
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/loops/fit_loop.py", line 217, in run
+    self.advance()
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/loops/fit_loop.py", line 465, in advance
+    self.epoch_loop.run(self._data_fetcher)
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/loops/training_epoch_loop.py", line 153, in run
+    self.advance(data_fetcher)
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/loops/training_epoch_loop.py", line 311, in advance
+    batch, _, __ = next(data_fetcher)
+                   ^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/loops/fetchers.py", line 134, in __next__
+    batch = super().__next__()
+            ^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/loops/fetchers.py", line 61, in __next__
+    batch = next(self.iterator)
+            ^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/utilities/combined_loader.py", line 341, in __next__
+    out = next(self._iterator)
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/pytorch_lightning/utilities/combined_loader.py", line 78, in __next__
+    out[i] = next(self.iterators[i])
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 708, in __next__
+    data = self._next_data()
+           ^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 1480, in _next_data
+    return self._process_data(data)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torch/utils/data/dataloader.py", line 1505, in _process_data
+    data.reraise()
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torch/_utils.py", line 733, in reraise
+    raise exception
+RuntimeError: Caught RuntimeError in DataLoader worker process 0.
+Original Traceback (most recent call last):
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torch/utils/data/_utils/worker.py", line 349, in _worker_loop
+    data = fetcher.fetch(index)  # type: ignore[possibly-undefined]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torch/utils/data/_utils/fetch.py", line 52, in fetch
+    data = [self.dataset[idx] for idx in possibly_batched_index]
+            ~~~~~~~~~~~~^^^^^
+  File "/iridisfs/home/oeg1n18/placeforge/src/datamodules/datasets/train.py", line 201, in __getitem__
+    image = torchvision.io.read_image(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torchvision/io/image.py", line 336, in read_image
+    data = read_file(path)
+           ^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torchvision/io/image.py", line 64, in read_file
+    data = torch.ops.image.read_file(str(path))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oeg1n18/.local/lib/python3.12/site-packages/torch/_ops.py", line 1123, in __call__
+    return self._op(*args, **(kwargs or {}))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: [Errno 2] No such file or directory: '/iridisfs/geosets/msls/train/queries/@0398171.26@3702024.63@12@S@033.45281@-112.09566@w6xnGS45F8XeSGcHgeDL6g@@359@@@@20170417@day_forward_phoenix@.jpg'
+

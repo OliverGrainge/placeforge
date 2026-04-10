@@ -1,0 +1,70 @@
+Running SLURM prolog script on rose12
+===============================================================================
+Job started on Fri Apr 10 18:22:13 BST 2026
+Job ID          : 810464
+Job name        : placeforge_train
+WorkDir         : /iridisfs/home/oeg1n18/placeforge/src
+Command         : /home/oeg1n18/placeforge/src/../submit_train_job.sh
+Partition       : a100
+Num hosts       : 1
+Num cores       : 16
+Num of tasks    : 1
+Hosts allocated : rose12
+Job Output Follows ...
+===============================================================================
+Job ID: 810464
+Node: rose12
+Config: /home/oeg1n18/placeforge/src/configs/train/combined/selavpr_large_boq.yaml
+GPUs: 1
+
+====================================================
+  Train: gsvcities_sf_xl_pitts30k_msls_train
+    images:       6,774,263
+    places:       474,297
+    images/place: avg=2880.2  min=4  max=7346  std=2683.6
+    supergroups:  463
+    places/sg:    avg=1024.4  min=302  max=2352  std=324.9
+    images/sg:    avg=14631.2  min=2586  max=43894  std=7885.4
+    batch size:   512  (128 places × 4 images)
+  Val: pitts30k_test
+    queries:  6,816
+    database: 10,000
+  Val: msls_val
+    queries:  11,008
+    database: 18,871
+====================================================
+
+┏━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃   ┃ Name     ┃ Type                 ┃ Params ┃ Mode  ┃ FLOPs ┃
+┡━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│ 0 │ model    │ SelaVPRLargeBoQ      │  335 M │ train │     0 │
+│ 1 │ ms_miner │ MultiSimilarityMiner │      0 │ train │     0 │
+│ 2 │ ms_loss  │ MultiSimilarityLoss  │      0 │ train │     0 │
+└───┴──────────┴──────────────────────┴────────┴───────┴───────┘
+Trainable params: 31.2 M                                                        
+Non-trainable params: 304 M                                                     
+Total params: 335 M                                                             
+Total estimated model params size (MB): 1.3 K                                   
+Modules in train mode: 781                                                      
+Modules in eval mode: 0                                                         
+Total FLOPs: 0                                                                  
+Sanity Checking ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2/2 0:00:02 • 0:00:00 2.24it/s 
+==============================================================================
+Running epilogue script on rose12.
+
+Submit time  : 2026-04-10T18:18:58
+Start time   : 2026-04-10T18:22:13
+End time     : 2026-04-10T18:24:57
+Elapsed time : 00:02:44 (Timelimit=2-00:00:00)
+
+Job ID: 810464
+Cluster: iridis_x
+User/Group: oeg1n18/fp
+State: FAILED (exit code 1)
+Nodes: 1
+Cores per node: 16
+CPU Utilized: 00:02:45
+CPU Efficiency: 6.29% of 00:43:44 core-walltime
+Job Wall-clock time: 00:02:44
+Memory Utilized: 10.14 GB
+Memory Efficiency: 7.92% of 128.00 GB (128.00 GB/node)
