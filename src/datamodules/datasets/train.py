@@ -77,11 +77,8 @@ class ContrastiveBatchSampler(Sampler):
     """Yields batches where all samples share the same supergroup.
 
     Batches from all supergroups are collected and then globally shuffled,
-    so supergroups freely interleave at the batch level.
-
-    When *place_weights* is provided, places within each supergroup are
-    sampled with replacement according to those weights (enabling
-    source-balanced sampling).  Otherwise, uniform shuffle is used.
+    so supergroups freely interleave at the batch level.  Within each
+    supergroup, places are shuffled without replacement.
     """
 
     def __init__(
@@ -89,26 +86,16 @@ class ContrastiveBatchSampler(Sampler):
         supergroup_to_indices: dict[Any, list[int]],
         batch_size: int,
         drop_last: bool = False,
-        place_weights: np.ndarray | None = None,
     ):
         self.supergroup_to_indices = supergroup_to_indices
         self.batch_size = batch_size
         self.drop_last = drop_last
-        self.place_weights = place_weights
 
     def __iter__(self):
         all_batches = []
         for indices in self.supergroup_to_indices.values():
-            if self.place_weights is not None:
-                # Weighted sampling with replacement within the supergroup.
-                w = self.place_weights[indices]
-                w = w / w.sum()
-                sampled = np.random.choice(
-                    indices, size=len(indices), replace=True, p=w,
-                ).tolist()
-            else:
-                sampled = indices.copy()
-                random.shuffle(sampled)
+            sampled = indices.copy()
+            random.shuffle(sampled)
             for i in range(0, len(sampled), self.batch_size):
                 batch = sampled[i : i + self.batch_size]
                 if not self.drop_last or len(batch) == self.batch_size:
@@ -146,11 +133,9 @@ class ContrastiveTrainDataset(Dataset):
         images_per_place: int,
         transform: Any = None,
         fraction: float = 1.0,
-        source_sample_weights: dict[str, float] | None = None,
     ):
         self.images_per_place = images_per_place
         self.transform = transform
-        self.source_sample_weights = source_sample_weights
         self.df, self.raw_dir = _load_train_df(name)
         self.df = subsample_geographic(self.df, fraction=fraction)
 
@@ -179,7 +164,6 @@ class ContrastiveTrainDataset(Dataset):
                 self.df.groupby(self._group_cols)["utm_north"].apply(list).to_dict()
             )
         self._supergroup_to_indices = self._build_supergroup_to_indices()
-        self._place_weights = self._build_place_weights()
 
     def __len__(self) -> int:
         return len(self.place_ids)
@@ -238,33 +222,6 @@ class ContrastiveTrainDataset(Dataset):
             sg_to_idx[supergroup_id].append(idx)
         return dict(sg_to_idx)
 
-    def _build_place_weights(self) -> np.ndarray | None:
-        """Compute per-place sampling weights from source_sample_weights.
-
-        Weight for a place with source *s* = configured_weight[s] / count[s],
-        so the expected sampling rate of each source matches the configured
-        ratio regardless of how many places each source contributes.
-        """
-        if not self.source_sample_weights:
-            return None
-
-        # Map each place index to its source (one source per place).
-        place_source = (
-            self.df.groupby(self._group_cols)["source"].first().to_dict()
-        )
-        source_counts: dict[str, int] = defaultdict(int)
-        place_sources: list[str] = []
-        for sg_id, pid in self.place_ids:
-            src = place_source[(sg_id, pid)]
-            place_sources.append(src)
-            source_counts[src] += 1
-
-        weights = np.empty(len(self.place_ids), dtype=np.float64)
-        for i, src in enumerate(place_sources):
-            weights[i] = self.source_sample_weights.get(src, 1.0) / source_counts[src]
-
-        return weights
-
     @property
     def supergroup_to_indices(self) -> dict[Any, list[int]]:
         return self._supergroup_to_indices
@@ -281,7 +238,6 @@ class ContrastiveTrainDataset(Dataset):
             self.supergroup_to_indices,
             batch_size,
             drop_last=drop_last,
-            place_weights=self._place_weights,
         )
 
     @staticmethod

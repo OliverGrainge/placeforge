@@ -1,5 +1,5 @@
 logger:
-  name: combined_selavpr_large_boq
+  name: combined_dinov2_boq
 
 trainer:
   max_steps: 30000
@@ -15,17 +15,21 @@ trainer:
 compile: false
 
 module:
-  model_name: selavpr_large_boq
+  model_name: dinov2_boq
+  model_kwargs:
+    unfreeze_n_blocks: 4
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   warmup_steps: 50
-  backbone_lr_scale: 0.5
+  backbone_lr_scale: 0.2
   lr_schedule: staged
   lr_stages:
-    - until: 20000
+    - until: 15000
       scale: 1.0
     - until: 10000
       scale: 0.35
+    - until: 5000
+      scale: 0.1
   val_recall_ks: [1, 5, 10]
   miner_epsilon: 0.1
 

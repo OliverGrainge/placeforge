@@ -32,11 +32,6 @@ module:
 datamodule:
   train_dataset_name: gsvcities_sf_xl_pitts30k_msls_train
   fraction: 1.0
-  source_sample_weights:
-    gsvcities: 2.0
-    sf_xl: 1.0
-    pitts30k: 4.0
-    msls: 1.0
   val_dataset_names:
     - pitts30k_test
     - msls_val

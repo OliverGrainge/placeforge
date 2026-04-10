@@ -23,7 +23,6 @@ class CuraVPRTrainDataModule(BaseDataModule):
         val_transform: Any = None,
         test_dataset_names: List[str] | None = None,
         test_transform: Any = None,
-        source_sample_weights: dict[str, float] | None = None,
     ):
         super().__init__(
             val_dataset_names=val_dataset_names,
@@ -37,7 +36,6 @@ class CuraVPRTrainDataModule(BaseDataModule):
         self.images_per_place = images_per_place
         self.fraction = fraction
         self.train_transform = train_transform
-        self.source_sample_weights = source_sample_weights
         self.save_hyperparameters()
 
         self._train_dataset: ContrastiveTrainDataset | None = None
@@ -69,7 +67,6 @@ class CuraVPRTrainDataModule(BaseDataModule):
                 images_per_place=self.images_per_place,
                 transform=self.train_transform,
                 fraction=self.fraction,
-                source_sample_weights=self.source_sample_weights,
             )
         super().setup(stage)
 
