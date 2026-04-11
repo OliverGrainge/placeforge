@@ -1,19 +1,88 @@
 # PlaceForge
 
-A PyTorch Lightning framework for training and evaluating visual place recognition (VPR) models with a focus on **data curation**. PlaceForge implements the **CureVPR** pipeline, which treats GPS metadata as a spatial prior and uses visual embeddings to enforce label consistency, producing cleaner supervision for contrastive metric learning.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c.svg)](https://pytorch.org/)
+[![Lightning](https://img.shields.io/badge/Lightning-2.x-792ee5.svg)](https://lightning.ai/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-PlaceForge supports modern vision backbones (DINOv2 ViT-B/14, SelaVPR++), multiple aggregation methods (GeM, BoQ, SALAD), and evaluation across standard geo-localisation benchmarks.
+A PyTorch Lightning framework for training and evaluating visual place recognition (VPR) models with a focus on **data curation**. PlaceForge implements the **CureVPR** pipeline, which treats GPS metadata as a spatial prior and uses visual embeddings to enforce label consistency -- producing cleaner supervision for contrastive metric learning.
 
-## Features
+<!--
+TODO: Add a pipeline overview diagram here, e.g.:
+![CureVPR Pipeline](assets/pipeline_overview.png)
+-->
 
-- **CureVPR data curation pipeline** -- offline visual coherence filtering and supergroup construction that removes noisy GPS-based labels before training
-- **Modular architecture** -- mix-and-match backbones and aggregation heads
-- **Multi-source training** -- combine GSV-Cities, SF-XL, Pittsburgh 30k, and MSLS with per-source sampling weights
-- **Contrastive training** -- MultiSimilarityLoss with hard-negative mining via supergroup-aware batch sampling
-- **Standard benchmarks** -- evaluate on Pitts30k, MSLS, Tokyo 24/7, Nordland, SVOX, and SF-XL
-- **Pretrained baselines** -- one-command evaluation of MegaLoc, BoQ, SALAD, EigenPlaces, MixVPR, SuperVLAD, and SAGE
-- **Ablation suite** -- ready-to-run pipelines and configs for component, threshold, and supergroup size ablations
-- **HPC ready** -- SLURM submission scripts and offline model prefetching
+## Key Results
+
+CureVPR improves Recall@1 by **+7.9 points** over raw GPS supervision on average, with the largest gains on challenging benchmarks like Nordland (+12.5 R@1).
+
+### Component Ablation
+
+Each component of the CureVPR pipeline contributes to the final result:
+
+| Method | Pitts30k R@1 | Nordland R@1 | Avg R@1 |
+|--------|:---:|:---:|:---:|
+| Raw GPS (baseline) | 90.0 | 78.5 | 84.2 |
+| + Coherence Filtering | 91.2 | 81.7 | 86.5 |
+| + Supergroups | 92.6 | 91.3 | 91.9 |
+| **CureVPR (full)** | **93.1** | **91.0** | **92.1** |
+
+<p align="center">
+  <img src="assets/component_ablation.png" width="550" alt="Component ablation bar chart">
+</p>
+
+### Hyperparameter Sensitivity
+
+The pipeline is robust across a range of threshold and supergroup size settings:
+
+<p align="center">
+  <img src="assets/sensitivity_combined.png" width="700" alt="Threshold and supergroup size sensitivity">
+</p>
+
+<details>
+<summary>Full sensitivity results</summary>
+
+**Cosine Similarity Threshold (tau)**
+
+| tau | Pitts30k R@1 | Nordland R@1 | Avg R@1 |
+|:---:|:---:|:---:|:---:|
+| 0.2 | 92.5 | 86.0 | 89.2 |
+| **0.3** | **93.1** | **91.0** | **92.1** |
+| 0.4 | 92.9 | 84.8 | 88.8 |
+
+**Supergroup Size**
+
+| Size | Pitts30k R@1 | Nordland R@1 | Avg R@1 |
+|:---:|:---:|:---:|:---:|
+| 512 | 92.4 | 90.4 | 91.4 |
+| **1024** | **93.1** | **91.0** | **92.1** |
+| 2048 | 92.8 | 91.6 | 92.2 |
+
+</details>
+
+## CureVPR Pipeline
+
+The core contribution of this framework is the CureVPR data curation pipeline, which processes GPS-tagged street-level images through four stages:
+
+```
+Raw GPS Images ──> Spatial Quantisation ──> Coherence Filtering ──> Supergroup Construction ──> Training
+     |                    |                        |                         |
+  Noisy GPS         UTM grid cells           Remove outliers          Cluster similar
+  metadata         (12.5m, 60deg)           via visual sim.         places for batching
+```
+
+1. **Spatial Quantisation** -- partition images into a regular UTM grid (default 12.5m cells, 60-degree heading buckets)
+2. **Visual Coherence Filtering** -- iteratively remove images whose embedding similarity to other cell members falls below a cosine threshold, eliminating opposing viewpoints, occlusions, and GPS errors
+3. **Supergroup Construction** -- cluster geographically non-adjacent cells into visually similar groups using spherical k-means on place embeddings
+4. **Training** -- sample batches from within supergroups so that negatives are visually hard but geographically reliable
+
+| Parameter | Default | Description |
+|-----------|:-------:|-------------|
+| `cell_size_meters` | 12.5 | Side length of spatial grid cells |
+| `heading_size_degrees` | 60.0 | Heading quantisation bucket width |
+| `cos_sim_threshold` | 0.3 | Minimum mean cosine similarity for coherence filtering |
+| `min_images` | 4 | Minimum surviving images per place |
+| `supergroup_size` | 1024 | Target number of places per supergroup |
 
 ## Setup
 
@@ -116,32 +185,21 @@ placeforge train configs/train/ablations/sg512.yaml
 placeforge train configs/train/ablations/sg2048.yaml
 ```
 
-### 5. HPC / SLURM
+### 5. Regenerate figures
+
+```bash
+python scripts/generate_figures.py
+```
+
+Reads metric YAML files from `checkpoints/train/ablations/` and saves charts to `assets/`.
+
+### 6. HPC / SLURM
 
 ```bash
 sbatch submit_train_job.sh configs/train/sf_xl/selavpr_base_boq.yaml
 ```
 
 See [HPC_SETUP.md](HPC_SETUP.md) for cluster-specific setup, including offline model caching and WANDB sync.
-
-## CureVPR Pipeline
-
-The core contribution of this framework is the CureVPR data curation pipeline, which processes GPS-tagged images through four stages:
-
-1. **Spatial Quantisation** -- partition images into a regular UTM grid (default 12.5m cells, 60-degree heading buckets)
-2. **Visual Coherence Filtering** -- iteratively remove images whose embedding similarity to other cell members falls below a cosine threshold, eliminating opposing viewpoints, occlusions, and GPS errors
-3. **Supergroup Construction** -- cluster geographically non-adjacent cells into visually similar groups using spherical k-means on place embeddings
-4. **Training** -- sample batches from within supergroups so that negatives are visually hard but geographically reliable
-
-Key pipeline parameters:
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `cell_size_meters` | 12.5 | Side length of spatial grid cells |
-| `heading_size_degrees` | 60.0 | Heading quantisation bucket width |
-| `cos_sim_threshold` | 0.3 | Minimum mean cosine similarity for coherence filtering |
-| `min_images` | 4 | Minimum surviving images per place |
-| `supergroup_size` | 1024 | Target number of places per supergroup |
 
 ## Supported Models
 
@@ -239,8 +297,11 @@ src/
       placeids.py                 # Place ID assignment + coherence filtering
       supergroups.py              # Supergroup clustering
       save.py                     # Parquet export
+scripts/
+  generate_figures.py             # Reproduce all result figures
+assets/                           # Generated figures for README
 ```
 
 ## License
 
-See repository for license details.
+This project is licensed under the MIT License -- see the [LICENSE](LICENSE) file for details.

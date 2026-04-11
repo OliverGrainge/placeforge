@@ -8,5 +8,16 @@ __pycache__/
 *.json
 *.parquet
 *.npy
+
+# Experiment tracking
 src/wandb/
 logs/*
+
+# Checkpoints and model weights
+checkpoints/
+
+# Scratch / local scripts
+scratch.py
+env.sh
+copy_*.sh
+uv.lock
