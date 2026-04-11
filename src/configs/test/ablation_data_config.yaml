@@ -1,0 +1,6 @@
+test_dataset_names:
+  - pitts30k_test
+  - nordland_test
+val_recall_ks: [1, 5, 10]
+batch_size: 32
+num_workers: 8

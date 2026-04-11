@@ -1,0 +1,9 @@
+checkpoint: /home/oliver/github/placeforge/checkpoints/train/ablations/sg2048/best.ckpt
+data_config: ablation_data_config.yaml
+architecture: selavpr_base_boq
+image_size: 224
+
+trainer:
+  accelerator: gpu
+  devices: 1
+  precision: 16-mixed
